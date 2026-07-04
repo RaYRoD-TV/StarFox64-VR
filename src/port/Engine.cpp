@@ -536,6 +536,35 @@ static void VrFeedImGuiGamepadNav() {
     axis(ImGuiKey_GamepadLStickDown, SDL_CONTROLLER_AXIS_LEFTY, +dz, +32767);
 }
 
+// Regular gamepads get the same two stick-click shortcuts as the motion controllers, so a player
+// flying on an Xbox-style pad (motion controllers idle) can still switch view modes and open the
+// settings menu: left stick click -> ImGuiKey_GamepadBack (libultraship's menubar toggle), right
+// stick click -> next view mode. Read focus-independent (SDL_GameControllerUpdate) like the nav feed
+// above, and edge-driven so a held click acts once and can't fight the per-frame VR-controller feed.
+extern "C" void VrGame_CycleViewMode(void); // src/engine/fox_play.c - skips Cockpit off-rails
+static void VrSdlPadStickClicks(bool menuOpen) {
+    static bool sPrevL = false, sPrevR = false;
+    SDL_GameControllerUpdate();
+    bool l = false, r = false;
+    for (int i = 0, n = SDL_NumJoysticks(); i < n; i++) {
+        if (SDL_IsGameController(i)) {
+            if (SDL_GameController* gc = SDL_GameControllerOpen(i)) {
+                l |= SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSTICK) != 0;
+                r |= SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSTICK) != 0;
+            }
+        }
+    }
+    if (l != sPrevL) {
+        ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;
+        ImGui::GetIO().AddKeyEvent(ImGuiKey_GamepadBack, l);
+    }
+    if (r && !sPrevR && !menuOpen) {
+        VrGame_CycleViewMode();
+    }
+    sPrevL = l;
+    sPrevR = r;
+}
+
 // Motion controllers drive the ImGui menu too: map their state onto ImGui's gamepad nav keys. The
 // left-stick CLICK feeds ImGuiKey_GamepadBack - libultraship's menubar toggle - so the settings menu
 // can be opened and closed from inside the headset; with the menu open, the left stick navigates and
@@ -674,6 +703,7 @@ void GameEngine::RunCommands(Gfx* Commands, const std::vector<std::unordered_map
         static bool sVrMenuNavArmed = false;
         // Every frame (menu open or not) so the left-stick click can TOGGLE the menu from the headset.
         VrFeedImGuiFromVrControllers(menuOpen);
+        VrSdlPadStickClicks(menuOpen); // same shortcuts for regular gamepads (edge-driven)
         if (menuOpen) {
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
             // The OS cursor isn't visible inside the headset, so have ImGui draw its own software cursor

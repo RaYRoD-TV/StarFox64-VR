@@ -2,6 +2,8 @@
 #include <math.h>
 #include "port/vr/vr.h"
 
+void VrGame_CycleViewMode(void); // src/engine/fox_play.c - next view mode; skips Cockpit off-rails
+
 OSContPad gControllerHold[4];
 OSContPad gControllerPress[4];
 u8 gControllerPlugged[4];
@@ -137,9 +139,10 @@ static void Controller_MergeVr(void) {
     }
 
     // Right stick CLICK steps to the next VR view mode (Third -> First -> Cockpit -> Diorama -> Theater ->
-    // wrap). Discrete and edge-detected: one step per click, no accidental analog switching mid-flight.
+    // wrap; Cockpit is skipped off-rails). Discrete and edge-detected: one step per click, no accidental
+    // analog switching mid-flight.
     if ((vr & VR_BTN_RSTICK) && !(sPrevVrBtns & VR_BTN_RSTICK)) {
-        vr_set_view_mode((vr_get_view_mode() + 1) % 5);
+        VrGame_CycleViewMode();
     }
     sPrevVrBtns = vr;
 

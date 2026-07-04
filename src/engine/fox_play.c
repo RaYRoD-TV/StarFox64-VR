@@ -7276,3 +7276,14 @@ s32 VrGame_IsCinematic(void) {
             return 1;
     }
 }
+
+// Step to the next VR view mode (right stick click - motion controller or gamepad). Cockpit only
+// exists on on-rails stages (the game never draws the cockpit interior in all-range battles), so the
+// cycle skips it there instead of landing on a mode with nothing to show.
+void VrGame_CycleViewMode(void) {
+    s32 next = (vr_get_view_mode() + 1) % 5;
+    if ((next == VR_VIEW_COCKPIT) && (gLevelMode != LEVELMODE_ON_RAILS)) {
+        next = (next + 1) % 5;
+    }
+    vr_set_view_mode(next);
+}

@@ -273,6 +273,11 @@ bool vr_sky_dome_active(void) {
         sCachedFrame = gSysFrameCount;
         sCachedOn = CVarGetInteger("gVRSkyDome", 1) != 0;
     }
+    // Inside Andross' arena the scrolling backdrop IS the level - the boss floats in it. Replacing it
+    // with the generic dome leaves the head hanging in empty space, so that stage keeps its own sky.
+    if (gCurrentLevel == LEVEL_VENOM_ANDROSS) {
+        return false;
+    }
     return vr_is_active() && sCachedOn;
 }
 

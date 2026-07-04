@@ -11,6 +11,7 @@
 #include "port/vr/vr.h"
 
 void Vr_DrawSkyDome(f32 ex, f32 ey, f32 ez); // src/engine/vr_skydome.c - draws the dome as world geometry
+s32 VrGame_IsCinematic(void);                // src/engine/fox_play.c - 1 during scripted/cutscene camera
 
 // f32 path1 = 0.0f;
 // f32 path2 = 0.0f;
@@ -2009,10 +2010,14 @@ void Display_Update(void) {
     // sweeps past in front of you. Pitching the AT point moves the real scene LookAt (both eyes, sky
     // dome, starfield together); the up vector below is pitched by the same matrix so the view rolls
     // over the top continuously instead of snapping when the loop passes vertical. Toggle: gVRLoopCam.
+    // Both First-Person camera extras (loop cam, flip cam) only apply while the player is actually
+    // FLYING: scripted scenes (level complete flybys, the post-Andross escape, warps) leave
+    // bankAngle / aerobaticPitch wherever the script parked them, and a stale 180 there turned the
+    // whole ending cutscene upside down.
+    s32 vrFpFlying = vr_is_active() && (vr_get_view_mode() == VR_VIEW_FIRST_PERSON) && (VrGame_IsCinematic() == 0);
     f32 upYaw = camPlayer->camYaw;
     f32 upPitch = camPlayer->camPitch;
-    if (vr_is_active() && (vr_get_view_mode() == VR_VIEW_FIRST_PERSON) &&
-        (CVarGetInteger("gVRLoopCam", 1) != 0) && (camPlayer->aerobaticPitch != 0.0f)) {
+    if (vrFpFlying && (CVarGetInteger("gVRLoopCam", 1) != 0) && (camPlayer->aerobaticPitch != 0.0f)) {
         Vec3f fwd;
         f32 dx = gPlayCamAt.x - gPlayCamEye.x;
         f32 dy = gPlayCamAt.y - gPlayCamEye.y;
@@ -2038,7 +2043,7 @@ void Display_Update(void) {
     // Cockpit already gets a full roll from Camera_UpdateCockpitOnRails; Third Person stays level for comfort.
     // Opt-out with gVRFlipCam. Flat play and the other modes keep the stock damped camRoll.
     f32 camRollDeg = camPlayer->camRoll;
-    if (vr_is_active() && (vr_get_view_mode() == VR_VIEW_FIRST_PERSON) && (CVarGetInteger("gVRFlipCam", 1) != 0)) {
+    if (vrFpFlying && (CVarGetInteger("gVRFlipCam", 1) != 0)) {
         camRollDeg = -(camPlayer->bankAngle + camPlayer->rockAngle);
     }
     Matrix_RotateZ(gCalcMatrix, -camRollDeg * M_DTOR, MTXF_APPLY);
