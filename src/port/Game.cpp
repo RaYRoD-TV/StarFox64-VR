@@ -26,6 +26,16 @@ extern "C" void Timer_Update();
 // src/port/Engine.cpp - releases OpenXR on quit so no runtime thread outlives the window.
 extern "C" void GameEngine_TerminateVr(void);
 
+#ifdef _WIN32
+// Hybrid laptops default OpenGL to the power-saving iGPU, whose drivers are the most common source
+// of context-creation failures (VR forces the OpenGL backend, so every VR player is exposed). These
+// exports tell the NVIDIA / AMD drivers to run this process on the discrete GPU instead.
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 void push_frame() {
     Graphics_ThreadUpdate();
     GameEngine::StartAudioFrame();
