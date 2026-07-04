@@ -5967,6 +5967,23 @@ void Player_Update(Player* player) {
                 player->unk_014 = 0.1f;
             }
 
+            // VR: Cockpit is its own view mode, so keep the game's in-cockpit camera (alternateView) locked
+            // to it - selecting VR_VIEW_COCKPIT turns it on, any other mode turns it off - instead of the
+            // manual C-Up toggle above. Same eligibility as that toggle (Arwing, or versus Landmaster).
+            if (vr_is_active() && !player->somersault &&
+                ((player->form == FORM_ARWING) || (gVersusMode && (player->form == FORM_LANDMASTER)))) {
+                s32 wantCockpit = (vr_get_view_mode() == VR_VIEW_COCKPIT);
+
+                if (player->alternateView != wantCockpit) {
+                    player->alternateView = wantCockpit;
+                    AUDIO_PLAY_SFX(wantCockpit ? NA_SE_VIEW_MOVE_IN : NA_SE_VIEW_MOVE_OUT, gDefaultSfxSource, 4);
+                    if (!wantCockpit && (gLevelMode == LEVELMODE_ON_RAILS)) {
+                        player->camRoll = 0.0f;
+                    }
+                    player->unk_014 = 0.1f;
+                }
+            }
+
             switch (gLevelMode) {
                 case LEVELMODE_ON_RAILS:
                     gLoadLevelObjects = true;

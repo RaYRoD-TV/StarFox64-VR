@@ -588,6 +588,10 @@ static const char* radioCommBox[] = {
     "Original", "Expand"
 };
 
+static const char* vrFogModes[] = {
+    "Off", "World Distance", "Stock N64"
+};
+
 void DrawEnhancementsMenu() {
     if (UIWidgets::BeginMenu("Enhancements")) {
 
@@ -716,12 +720,13 @@ void DrawEnhancementsMenu() {
         // VR options. The VR layer reads these CVars every frame, so changes apply live. Only useful
         // while running in VR (headset connected, or forced with --vr).
         if (UIWidgets::BeginMenu("VR")) {
-            static const char* vrViewModes[] = { "Third Person", "First Person", "Theater", "Diorama" };
+            static const char* vrViewModes[] = { "Third Person", "First Person", "Cockpit", "Diorama", "Theater" };
             UIWidgets::CVarCombobox("View Mode", "gVRViewMode", vrViewModes, {
                 .tooltip = "How the game is shown in VR. Third Person = the classic chase cam in stereo 3D; "
-                           "First Person = ride at the Arwing's cockpit; Theater = flat screen floating in "
-                           "front of you (most comfortable); Diorama = the level shrunk to a tabletop you "
-                           "lean around.",
+                           "First Person = ride at the pilot's seat with the Arwing ahead of you; Cockpit = "
+                           "the game's own in-cockpit camera with the dashboard and glass; Diorama = the "
+                           "level shrunk to a tabletop you lean around; Theater = flat screen floating in "
+                           "front of you (most comfortable).",
                 .defaultIndex = 0,
             });
             UIWidgets::CVarSliderFloat("World Scale (units/m)", "gVRWorldScale", 5.0f, 2000.0f, 25.0f, {
@@ -741,11 +746,12 @@ void DrawEnhancementsMenu() {
                 .format = "%.2f",
                 .step = 0.02f,
             });
-            UIWidgets::CVarSliderFloat("First Person Forward (m)", "gVRFirstPersonFwd", -15.0f, 15.0f, 4.0f, {
-                .tooltip = "How far the eye is pushed toward the Arwing in First Person. Raise it a little "
-                           "at a time; if it moves the wrong way, use a negative value.",
-                .format = "%.2f",
-                .step = 0.25f,
+            UIWidgets::CVarSliderFloat("First Person Forward (m)", "gVRFirstPersonFwd", -30.0f, 30.0f, 14.0f, {
+                .tooltip = "How far the eye is pushed toward the Arwing in First Person. Needs to be large "
+                           "enough to move you up into the ship, or the view looks like Third Person. Raise "
+                           "until you're at the nose; if it moves the wrong way, use a negative value.",
+                .format = "%.1f",
+                .step = 0.5f,
             });
             UIWidgets::CVarSliderFloat("First Person World Scale (units/m)", "gVRFirstPersonScale", 5.0f, 500.0f,
                                        25.0f, {
@@ -759,6 +765,12 @@ void DrawEnhancementsMenu() {
                 .tooltip = "Raise or lower the eye in First Person.",
                 .format = "%.2f",
                 .step = 0.02f,
+            });
+            UIWidgets::CVarCheckbox("First Person Flip Cam", "gVRFlipCam", {
+                .tooltip = "In First Person, roll the whole view with the ship - so barrel rolls spin you and "
+                           "flying upside down puts you upside down. Turn off to keep the horizon level "
+                           "(more comfortable). Cockpit always rolls with the ship; Third Person stays level.",
+                .defaultValue = true,
             });
             UIWidgets::CVarSliderFloat("Diorama Distance (m)", "gVRDioramaDist", 0.1f, 3.0f, 0.25f, {
                 .tooltip = "How far in front of you the tabletop sits (Diorama mode).",
@@ -776,6 +788,23 @@ void DrawEnhancementsMenu() {
                 .format = "%.2f",
                 .step = 0.01f,
             });
+            UIWidgets::CVarCheckbox("Cockpit Floor", "gVRCockpitFloor", {
+                .tooltip = "Draw a solid floor under the pilot in Cockpit mode so you can't see the world "
+                           "through the bottom of the cockpit when you look down. On-rails cockpit only.",
+                .defaultValue = true,
+            });
+            UIWidgets::CVarSliderFloat("Cockpit Floor Height", "gVRCockpitFloorY", -50.0f, 20.0f, -6.0f, {
+                .tooltip = "Raise or lower the Cockpit floor. Raise it until it sits just below your feet and "
+                           "you can no longer see the world under the cockpit; lower it if it pokes into view.",
+                .format = "%.0f",
+                .step = 1.0f,
+            });
+            UIWidgets::CVarSliderFloat("Cockpit Floor Size", "gVRCockpitFloorSize", 10.0f, 200.0f, 42.0f, {
+                .tooltip = "How far the Cockpit floor extends. Keep it small so it stays inside the cockpit; "
+                           "raise it only if you can see the world past its edges.",
+                .format = "%.0f",
+                .step = 2.0f,
+            });
             UIWidgets::CVarSliderFloat("Stereo Depth", "gVRStereo", 0.0f, 1.5f, 0.5f, {
                 .tooltip = "Stereo separation strength. Lower is gentler / less eye strain.",
                 .format = "%.2f",
@@ -790,6 +819,11 @@ void DrawEnhancementsMenu() {
             UIWidgets::CVarSliderFloat("HUD Distance (m)", "gVRHudDist", 0.5f, 8.0f, 2.9f, {
                 .format = "%.1f",
                 .step = 0.1f,
+            });
+            UIWidgets::CVarCheckbox("Hide HUD", "gVRHideHud", {
+                .tooltip = "Hide the 2D overlay (radar, gauges, rings, lives, boss health) for a clean "
+                           "view. Radio messages and the aiming reticle stay.",
+                .defaultValue = false,
             });
             UIWidgets::CVarCheckbox("HUD Locked to World", "gVRHudWorldLock", {
                 .tooltip = "Pin the HUD plane to the room direction it was facing when enabled, so you can "
@@ -831,6 +865,47 @@ void DrawEnhancementsMenu() {
                 .format = "%.2f",
                 .step = 0.05f,
             });
+            ImGui::SeparatorText("VR Rendering");
+            UIWidgets::CVarCombobox("Fog (flying modes)", "gVRFogMode", vrFogModes, {
+                .tooltip = "Distance fog in Third / First / Cockpit view. World Distance rebuilds the fog from "
+                           "real distance so it reads correctly under the VR projection (and hides object "
+                           "pop-in again). Stock N64 keeps the game's raw fog, which the per-eye projection "
+                           "saturates - comparison only. Theater and Diorama always use the stock fog.",
+                .defaultIndex = 1,
+            });
+            UIWidgets::CVarSliderFloat("Fog Start (m)", "gVRFogNear", 0.0f, 2000.0f, 150.0f, {
+                .tooltip = "World Distance fog: how far out the fog begins, in meters at life size.",
+                .format = "%.0f",
+                .step = 25.0f,
+            });
+            UIWidgets::CVarSliderFloat("Fog Full (m)", "gVRFogFar", 50.0f, 5000.0f, 500.0f, {
+                .tooltip = "World Distance fog: where the fog becomes solid. The game spawns/despawns objects "
+                           "around 500 m, so values near that hide pop-in like the original fog did.",
+                .format = "%.0f",
+                .step = 25.0f,
+            });
+            UIWidgets::CVarCheckbox("Disable Backface Culling", "gVRDisableCulling", {
+                .tooltip = "Draw both sides of every surface. Can fill culled back-face holes in VR, but on "
+                           "this N64 engine it also lets back-faces overdraw front-faces so some geometry goes "
+                           "missing - leave OFF unless you know you want it.",
+                .defaultValue = false,
+            });
+            UIWidgets::CVarSliderFloat("Draw Distance (x)", "gVRDrawDistance", 1.0f, 8.0f, 1.0f, {
+                .tooltip = "Pushes the far clip out so distant terrain and large objects aren't cut off. "
+                           "Higher = see further; very high values can cause z-fighting far away.",
+                .format = "%.1f",
+                .step = 0.5f,
+            });
+            if (UIWidgets::CVarSliderFloat("Internal Resolution (x)", "gInternalResolution", 0.5f, 4.0f, 1.0f, {
+                    .tooltip = "Supersampling: render at this multiple of native resolution then downscale for "
+                               "a much sharper, cleaner image in the headset. 1.5-2x is a big upgrade; higher "
+                               "costs performance.",
+                    .format = "%.2f",
+                    .step = 0.1f,
+                })) {
+                Ship::Context::GetInstance()->GetWindow()->SetResolutionMultiplier(
+                    CVarGetFloat("gInternalResolution", 1.0f));
+            }
             UIWidgets::CVarCheckbox("Mixed Reality (passthrough)", "gVRPassthrough", {
                 .tooltip = "Show your real room behind the game using headset passthrough (Quest). Locks the "
                            "view to Diorama - the shrunk level sits on your table.",

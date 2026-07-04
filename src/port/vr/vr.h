@@ -15,9 +15,10 @@ extern "C" {
 // VR view modes (CVar gVRViewMode). The eye-matrix builder and the Engine render path branch on this.
 typedef enum {
     VR_VIEW_THIRD_PERSON = 0, // game chase cam, life-size stereo (default - the classic view)
-    VR_VIEW_FIRST_PERSON = 1, // eye pushed forward into the Arwing, life-size stereo (cockpit view)
-    VR_VIEW_THEATER      = 2, // flat game frame on a head-locked screen, no stereo (max comfort)
+    VR_VIEW_FIRST_PERSON = 1, // eye pushed forward to the pilot's seat, life-size stereo (external geometry)
+    VR_VIEW_COCKPIT      = 2, // the game's own in-cockpit camera (dashboard + glass), rendered in stereo
     VR_VIEW_DIORAMA      = 3, // world shrunk to a tabletop miniature anchored in front of you
+    VR_VIEW_THEATER      = 4, // flat game frame on a head-locked screen, no stereo (max comfort)
 } VrViewMode;
 
 // --- request / probe ---------------------------------------------------------
@@ -128,6 +129,13 @@ float vr_third_person_push_units(void);
 // Game units the First Person eye currently sits ahead of the chase camera (the forward push, eased).
 // 0 outside First Person.
 float vr_fp_forward_game_units(void);
+// How the Fast3D interpreter should treat fog on the current pass: 0 = no fog, 1 = world-distance fog
+// (factor linear in clip w, i.e. real view depth - projection-independent), 2 = stock fog untouched.
+// Returns 2 outside VR and in Diorama / Theater, which render correctly with stock fog. gVRFogMode.
+int  vr_fog_mode(void);
+// World-distance fog coefficients: fogFactor(0..255) = clamp(clip_w * mul + off). Near/far come from
+// gVRFogNear / gVRFogFar (meters at life size) through the active view mode's world scale.
+void vr_fog_linear_coeffs(float* mul, float* off);
 // Game units per meter: how big the world feels. Bigger = world appears smaller.
 float vr_get_world_scale(void);  void vr_set_world_scale(float v);
 // Stereo separation strength (0 = mono, 1 = full IPD). Lower is gentler / less cross-eye.

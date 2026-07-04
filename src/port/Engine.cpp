@@ -551,8 +551,8 @@ static void VrFeedImGuiFromVrControllers(bool menuOpen) {
     if (!menuOpen) {
         return;
     }
-    io.AddKeyEvent(ImGuiKey_GamepadFaceDown, (vb & (VR_BTN_A | VR_BTN_RTRIGGER)) != 0);  // activate
-    io.AddKeyEvent(ImGuiKey_GamepadFaceRight, (vb & (VR_BTN_B | VR_BTN_LTRIGGER)) != 0); // cancel / back
+    io.AddKeyEvent(ImGuiKey_GamepadFaceDown, (vb & VR_BTN_A) != 0);   // activate (right trigger = pointer click)
+    io.AddKeyEvent(ImGuiKey_GamepadFaceRight, (vb & VR_BTN_B) != 0);  // cancel / back
     float ls[2];
     vr_controller_stick(0, ls);
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, ls[0] < -0.1f, ls[0] < 0.0f ? -ls[0] : 0.0f);
@@ -591,6 +591,51 @@ static bool VrComputeImGuiMousePos(float* outX, float* outY) {
     const bool multiViewport = (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0;
     *outX = (float)(multiViewport ? cx : cx - wx);
     *outY = (float)(multiViewport ? cy : cy - wy);
+    return true;
+}
+
+// VR controller as a MOUSE POINTER for the ImGui menu: the RIGHT thumbstick glides a virtual cursor and the
+// RIGHT TRIGGER left-clicks. This is what makes the menu usable in the headset (there is no OS mouse there).
+// Returns the cursor in the coords ImGui expects (window-local, or absolute desktop with multi-viewports).
+static bool VrControllerImGuiMousePos(float* outX, float* outY) {
+    static float cx = -1.0f, cy = -1.0f; // persistent virtual cursor, window-local pixels
+    SDL_Window* win = SDL_GL_GetCurrentWindow();
+    if (win == nullptr) {
+        return false;
+    }
+    int wx = 0, wy = 0, ww = 0, wh = 0;
+    SDL_GetWindowPosition(win, &wx, &wy);
+    SDL_GetWindowSize(win, &ww, &wh);
+    if (ww <= 0 || wh <= 0) {
+        return false;
+    }
+    if (cx < 0.0f) { // start centred
+        cx = ww * 0.5f;
+        cy = wh * 0.5f;
+    }
+    float rs[2];
+    vr_controller_stick(1, rs); // right stick drives the pointer
+    const float speed = (float)ww * 0.011f; // pixels per frame at full deflection
+    if (rs[0] > 0.15f || rs[0] < -0.15f) {
+        cx += rs[0] * speed;
+    }
+    if (rs[1] > 0.15f || rs[1] < -0.15f) {
+        cy -= rs[1] * speed; // stick +y is up -> screen y decreases
+    }
+    if (cx < 0.0f) {
+        cx = 0.0f;
+    } else if (cx > ww - 1) {
+        cx = (float)(ww - 1);
+    }
+    if (cy < 0.0f) {
+        cy = 0.0f;
+    } else if (cy > wh - 1) {
+        cy = (float)(wh - 1);
+    }
+    ImGui::GetIO().AddMouseButtonEvent(0, (vr_controller_buttons() & VR_BTN_RTRIGGER) != 0); // trigger = click
+    const bool multiViewport = (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0;
+    *outX = multiViewport ? (cx + wx) : cx;
+    *outY = multiViewport ? (cy + wy) : cy;
     return true;
 }
 #endif
@@ -637,7 +682,13 @@ void GameEngine::RunCommands(Gfx* Commands, const std::vector<std::unordered_map
             // Focus-independent pad + mouse feeds: refresh + push nav events before StartDraw's
             // ImGui::NewFrame consumes them.
             VrFeedImGuiGamepadNav();
-            vrMouseValid = VrComputeImGuiMousePos(&vrMouseX, &vrMouseY);
+            // Prefer the VR controller as the pointer (right stick = cursor, right trigger = click); fall back
+            // to the desktop mouse when no motion controllers are present.
+            if (vr_controllers_active()) {
+                vrMouseValid = VrControllerImGuiMousePos(&vrMouseX, &vrMouseY);
+            } else {
+                vrMouseValid = VrComputeImGuiMousePos(&vrMouseX, &vrMouseY);
+            }
             if (vrMouseValid) {
                 ImGui::GetIO().AddMousePosEvent(vrMouseX, vrMouseY);
             }
@@ -668,9 +719,12 @@ void GameEngine::RunCommands(Gfx* Commands, const std::vector<std::unordered_map
         // ship going down) use scripted camera sweeps that read as sickness in stereo, so they go to the
         // comfortable virtual screen.
         const bool inPlay = (gGameState == GSTATE_PLAY);
-        // Cutscenes and the native VR options overlay both render on the flat panel: cutscenes for comfort,
-        // the overlay so it sits on a stable readable screen instead of the in-world HUD plane.
-        const bool cinematic = inPlay ? (VrGame_IsCinematic() != 0 || VrMenu_IsOpen() != 0) : true;
+        // Only cutscenes force the flat panel now (scripted camera sweeps read as sickness in stereo). The
+        // native VR options overlay renders WITH the live stereo view behind it - the paused scene re-renders
+        // each frame off the current CVars, so every option (view mode, scale, stereo, sky, fog, ...) is
+        // visible in real time as you change it. The overlay panel is semi-transparent so the world shows
+        // through.
+        const bool cinematic = inPlay ? (VrGame_IsCinematic() != 0) : true;
         const bool stereo = inPlay && !cinematic && (vr_get_view_mode() != VR_VIEW_THEATER);
         static const std::unordered_map<Mtx*, MtxF> kEmptyMtx;
         const size_t steps = mtx_replacements.empty() ? 1 : mtx_replacements.size();
@@ -809,6 +863,14 @@ void GameEngine::ProcessGfxCommands(Gfx* commands) {
     if (wnd != nullptr) {
         wnd->SetTargetFps(fps);
         wnd->SetMaximumFrameLatency(CVarGetInteger("gRenderParallelization", 1) ? 2 : 1);
+        // Apply the internal-resolution multiplier (VR supersampling) when it changes. Driven from either the
+        // ImGui slider or the native VR menu - both just set the CVar, so this one spot makes it take effect.
+        static float sPrevRes = -1.0f;
+        float res = CVarGetFloat("gInternalResolution", 1.0f);
+        if (res != sPrevRes) {
+            sPrevRes = res;
+            wnd->SetResolutionMultiplier(res);
+        }
     }
 
     // When the gfx debugger is active, only run with the final mtx

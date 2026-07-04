@@ -737,6 +737,59 @@ void Display_CockpitGlass(void) {
     FrameInterpolation_RecordCloseChild();
 }
 
+// VR only: the on-rails cockpit interior model has no floor, so looking down in the headset shows the world
+// scrolling past underneath. Draw a large opaque dark quad in the SAME frame the interior model is drawn in
+// (call this from inside Display_Arwing's cockpit-view Matrix_Push, so it lines up with the interior and
+// banks with the ship), just below the pilot, to close that gap. Position/size are CVar-tunable for
+// in-headset dialing; gVRCockpitFloor toggles it.
+static Vtx sVrCockpitFloorVtx[5];
+void Vr_DrawCockpitFloor(void) {
+    f32 fy, fz, e;
+    s32 j;
+
+    if (!vr_is_active() || (vr_get_view_mode() != VR_VIEW_COCKPIT) || (CVarGetInteger("gVRCockpitFloor", 1) == 0)) {
+        return;
+    }
+    fy = CVarGetFloat("gVRCockpitFloorY", -6.0f);    // how far below the interior origin (local units)
+    fz = CVarGetFloat("gVRCockpitFloorZ", 0.0f);     // forward/back centre
+    e = CVarGetFloat("gVRCockpitFloorSize", 42.0f);  // half-extent: keep it inside the cockpit, not the world
+
+    // Solid black floor (the cockpit model likely has no floor geometry, so black reads as a proper closed
+    // hull under the pilot rather than a grey panel). 5 verts (centre + corners) kept for the triangle fan.
+    for (j = 0; j <= 4; j++) {
+        sVrCockpitFloorVtx[j].v.ob[0] = (j == 0) ? 0 : (s16) (((j == 1) || (j == 4)) ? -e : e);
+        sVrCockpitFloorVtx[j].v.ob[1] = 0;
+        sVrCockpitFloorVtx[j].v.ob[2] = (j == 0) ? 0 : (s16) ((j <= 2) ? -e : e);
+        sVrCockpitFloorVtx[j].v.flag = 0;
+        sVrCockpitFloorVtx[j].v.tc[0] = sVrCockpitFloorVtx[j].v.tc[1] = 0;
+        sVrCockpitFloorVtx[j].v.cn[0] = 0;
+        sVrCockpitFloorVtx[j].v.cn[1] = 0;
+        sVrCockpitFloorVtx[j].v.cn[2] = 0;
+        sVrCockpitFloorVtx[j].v.cn[3] = 255;
+    }
+
+    // Drawn relative to the caller's current matrix (the interior frame), offset down to the floor height.
+    Matrix_Push(&gGfxMatrix);
+    Matrix_Translate(gGfxMatrix, 0.0f, fy, fz, MTXF_APPLY);
+    Matrix_SetGfxMtx(&gMasterDisp);
+
+    gDPPipeSync(gMasterDisp++);
+    gSPTexture(gMasterDisp++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_OFF);
+    gDPSetCycleType(gMasterDisp++, G_CYC_1CYCLE);
+    gDPSetCombineMode(gMasterDisp++, G_CC_SHADE, G_CC_SHADE);
+    gDPSetRenderMode(gMasterDisp++, G_RM_ZB_OPA_SURF, G_RM_ZB_OPA_SURF2);
+    gSPClearGeometryMode(gMasterDisp++, G_LIGHTING | G_CULL_BACK | G_FOG);
+    gSPSetGeometryMode(gMasterDisp++, G_ZBUFFER | G_SHADE | G_SHADING_SMOOTH);
+    gSPVertex(gMasterDisp++, (uintptr_t) sVrCockpitFloorVtx, 5, 0);
+    gSP2Triangles(gMasterDisp++, 0, 1, 2, 0, 0, 2, 3, 0); // fan from the centre vertex
+    gSP2Triangles(gMasterDisp++, 0, 3, 4, 0, 0, 4, 1, 0);
+
+    // Restore the geometry modes we cleared so later draws (glass, other actors) aren't left unlit/unculled.
+    gSPSetGeometryMode(gMasterDisp++, G_LIGHTING | G_CULL_BACK | G_FOG);
+    Matrix_Pop(&gGfxMatrix);
+    gDPPipeSync(gMasterDisp++);
+}
+
 void Display_Arwing(Player* player, s32 reflectY) {
     Vec3f sp4C;
     f32 sp48;
@@ -754,6 +807,14 @@ void Display_Arwing(Player* player, s32 reflectY) {
         Matrix_MultVec3f(gGfxMatrix, &sp4C, &D_display_801613E0[1]);
     }
 
+    // VR First Person is the pilot's own eye, so don't draw the player's own Arwing - otherwise you're
+    // staring at your ship right in front of you instead of flying it. (Reticle positions above are still
+    // set; other players' ships and reflections still draw.) True first person = no ship, no cockpit shell.
+    if (vr_is_active() && (vr_get_view_mode() == VR_VIEW_FIRST_PERSON) && (gPlayerNum == player->num) &&
+        (reflectY == 0)) {
+        return;
+    }
+
     if (player->alternateView && (gLevelMode == LEVELMODE_ON_RAILS) &&
         (fabsf(player->trueZpos + gPathProgress - player->cam.eye.z) < 10.0f)) {
         if (reflectY == 0) {
@@ -763,6 +824,7 @@ void Display_Arwing(Player* player, s32 reflectY) {
             Matrix_RotateY(gGfxMatrix, M_PI, MTXF_APPLY);
             Matrix_SetGfxMtx(&gMasterDisp);
             gSPDisplayList(gMasterDisp++, aAwCockpitViewDL);
+            Vr_DrawCockpitFloor(); // VR Cockpit: close the see-through gap under the interior, same frame
             Matrix_Pop(&gGfxMatrix);
         }
     } else {
@@ -1932,7 +1994,16 @@ void Display_Update(void) {
                                        sqrtf(SQ(gPlayCamEye.z - gPlayCamAt.z) + SQ(gPlayCamEye.x - gPlayCamAt.x)));
     Matrix_RotateY(gCalcMatrix, -camPlayer->camYaw, MTXF_NEW);
     Matrix_RotateX(gCalcMatrix, camPlayer->camPitch, MTXF_APPLY);
-    Matrix_RotateZ(gCalcMatrix, -camPlayer->camRoll * M_DTOR, MTXF_APPLY);
+    // VR "flip cam": in First Person, roll the whole view by the ship's FULL bank (which includes barrel
+    // rolls and inverted flight) instead of the damped camRoll, so you actually feel the ship roll over. It
+    // rides the camera up-vector below into the scene LookAt, so both eyes AND the sky dome roll together.
+    // Cockpit already gets a full roll from Camera_UpdateCockpitOnRails; Third Person stays level for comfort.
+    // Opt-out with gVRFlipCam. Flat play and the other modes keep the stock damped camRoll.
+    f32 camRollDeg = camPlayer->camRoll;
+    if (vr_is_active() && (vr_get_view_mode() == VR_VIEW_FIRST_PERSON) && (CVarGetInteger("gVRFlipCam", 1) != 0)) {
+        camRollDeg = -(camPlayer->bankAngle + camPlayer->rockAngle);
+    }
+    Matrix_RotateZ(gCalcMatrix, -camRollDeg * M_DTOR, MTXF_APPLY);
     tempVec.x = 0.0f;
     tempVec.y = 100.0f;
     tempVec.z = 0.0f;

@@ -74,13 +74,14 @@ void Controller_Init(void) {
 //   right grip            bank right (R; double-squeeze = barrel roll right)
 //   right stick up        boost   (the game's stock boost button)
 //   right stick down      brake
-//   right stick click / X cockpit view toggle (C-Up)
+//   right stick click     step to the next VR view mode (Third / First / Cockpit / Diorama / Theater)
 //   left stick click      open / close the settings menu (handled in the engine, not here)
 //   menu button           pause (Start)
 // Per axis the stronger source wins, so a gamepad on the desk stays usable alongside the
 // motion controllers.
 bool GameEngine_GameInputBlocked(void); // src/port/Engine.cpp - true while the settings menu owns input
 static void Controller_MergeVr(void) {
+    static unsigned sPrevVrBtns = 0; // last frame's VR buttons, for right-stick-click edge detection
     unsigned vr = vr_controller_buttons();
     float ls[2];
     float rs[2];
@@ -89,11 +90,13 @@ static void Controller_MergeVr(void) {
     s8 vx, vy;
 
     if (!vr_controllers_active()) {
+        sPrevVrBtns = vr;
         return;
     }
     // The settings menu is open with controller nav: the sticks drive the menu (fed to it by the
     // engine), not the ship. Physical pads are blocked by the same predicate inside libultraship.
     if (GameEngine_GameInputBlocked()) {
+        sPrevVrBtns = vr;
         return;
     }
     if (vr & (VR_BTN_A | VR_BTN_RTRIGGER)) {
@@ -111,22 +114,24 @@ static void Controller_MergeVr(void) {
     if (vr & VR_BTN_MENU) {
         b |= START_BUTTON;
     }
-    // Cockpit view toggle (C-Up). Suppressed in Diorama mode - there you're looking at the shrunk-down
-    // tabletop, not sitting in the ship, so flipping the game's cockpit camera just jars the framing.
-    if ((vr & (VR_BTN_RSTICK | VR_BTN_X)) && vr_get_view_mode() != VR_VIEW_DIORAMA) {
-        b |= U_CBUTTONS;
-    }
-
     vr_controller_stick(0, ls);
     vr_controller_stick(1, rs);
 
-    // Right stick: forward = boost, back = brake (the stock C-Left / C-Down assignments).
+    // Right stick up/down = boost/brake (the stock C-Left / C-Down assignments).
     if (rs[1] > 0.5f) {
         b |= L_CBUTTONS;
     }
     if (rs[1] < -0.5f) {
         b |= D_CBUTTONS;
     }
+
+    // Right stick CLICK steps to the next VR view mode (Third -> First -> Cockpit -> Diorama -> Theater ->
+    // wrap). Discrete and edge-detected: one step per click, no accidental analog switching mid-flight.
+    if ((vr & VR_BTN_RSTICK) && !(sPrevVrBtns & VR_BTN_RSTICK)) {
+        vr_set_view_mode((vr_get_view_mode() + 1) % 5);
+    }
+    sPrevVrBtns = vr;
+
     sNextController[0].button |= b;
 
     // Left stick flies. Radial deadzone, rescaled so full deflection still reaches full lock;

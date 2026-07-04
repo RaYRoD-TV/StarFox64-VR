@@ -6,6 +6,8 @@
 #include "port/interpolation/FrameInterpolation.h"
 #include "port/hooks/list/EngineEvent.h"
 #include "port/mods/PortEnhancements.h"
+#include "port/vr/vr.h"
+#include "vr_menu.h"
 
 f32 gNextVsViewScale;
 f32 gVsViewScale;
@@ -566,15 +568,26 @@ void Game_Update(void) {
                                    gPlayerGlareReds[0], gPlayerGlareGreens[0], gPlayerGlareBlues[0],
                                    gPlayerGlareAlphas[0]);
             if ((gDrawMode == DRAW_PLAY) || (gDrawMode == DRAW_ENDING)) {
-                Radio_Draw();
+                // VR: Hide HUD (gVRHideHud) and the open VR options menu strip the 2D chrome (edge
+                // arrows, boss health; HUD_Draw gates its own overlay). The radio dialogue box is
+                // content rather than chrome, so it only yields to the menu panel itself.
+                s32 vrMenuOpen = vr_is_active() && VrMenu_IsOpen();
+                s32 vrHudHidden = vr_is_active() && (VrMenu_IsOpen() || (CVarGetInteger("gVRHideHud", 0) != 0));
+                if (!vrMenuOpen) {
+                    Radio_Draw();
+                }
                 if (gShowHud) {
                     HUD_Draw();
-                    CALL_CANCELLABLE_EVENT(DrawEdgeArrowsHUDEvent) {
-                        HUD_EdgeArrows_Update();
+                    if (!vrHudHidden) {
+                        CALL_CANCELLABLE_EVENT(DrawEdgeArrowsHUDEvent) {
+                            HUD_EdgeArrows_Update();
+                        }
                     }
                 }
-                CALL_CANCELLABLE_EVENT(DrawBossHealthHUDEvent) {
-                    HUD_DrawBossHealth();
+                if (!vrHudHidden) {
+                    CALL_CANCELLABLE_EVENT(DrawBossHealthHUDEvent) {
+                        HUD_DrawBossHealth();
+                    }
                 }
             }
         } else {

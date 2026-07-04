@@ -108,14 +108,15 @@ static float sEyeHeight   = 0.16f; // meters above the head anchor for THIRD PER
 static float sMenuDist    = 3.2f; // menu/title panel distance (m) - comfortable, not in your face
 static float sMenuSize    = 4.2f; // menu/title panel width (m)
 
-// VR view mode (gVRViewMode). 0=Third Person (chase cam, life-size), 1=First Person (eye pushed forward
-// into the Arwing), 2=Theater (flat frame on a head-locked screen), 3=Diorama (world shrunk to a
-// tabletop). The eye-matrix builder branches on this; Engine.cpp routes Theater to the flat panel path.
-// Tunables below are read from CVars each frame so they apply live.
+// VR view mode (gVRViewMode). 0=Third Person (chase cam, life-size), 1=First Person (eye pushed to the
+// pilot's seat), 2=Cockpit (the game's own in-cockpit camera), 3=Diorama (world shrunk to a tabletop),
+// 4=Theater (flat frame on a head-locked screen). The eye-matrix builder branches on this; Engine.cpp
+// routes Theater to the flat panel path. Tunables below are read from CVars each frame so they apply live.
 static int   sViewMode           = 0;       // VrViewMode
-static float sFirstPersonForward = 4.00f;   // meters the eye is pushed forward toward the Arwing (First
-                                            // Person). It rides the chase cam's view direction, so big
-                                            // values overshoot the ship - tune in headset.
+static float sFirstPersonForward = 14.00f;  // meters the eye is pushed forward toward the Arwing (First
+                                            // Person). Needs to cover most of the chase-cam distance or the
+                                            // view barely differs from Third Person; big values overshoot the
+                                            // ship - tune in headset.
 static float sFPForwardCur       = 0.0f;    // eased First-Person push - see vr_begin_frame.
 static float sFirstPersonScale   = 25.0f;   // First Person world scale (units/m), its OWN knob (like
                                             // Diorama) so it doesn't shrink Third Person.
@@ -128,6 +129,14 @@ static float sDioramaWorldScale  = 800.0f;  // Diorama world scale (game units/m
 static float sDioramaDist        = 0.25f;   // meters the tabletop sits in front of you (Diorama)
 static float sDioramaHeight      = -0.16f;  // meters the tabletop is offset vertically (Diorama; - = below eye)
 static float sMenuOpacity        = 0.5f;    // VR menu/HUD panel opacity (1 = opaque, lower = see game through)
+
+// World-distance fog for the flying modes (gVRFogMode = 1). Near/far are METERS AT LIFE SIZE (the default
+// 25 game-units-per-meter mapping), so the fogged distance stays anchored to the WORLD - changing a view
+// mode's scale knob never shifts which objects are fogged. See vr_fog_linear_coeffs().
+static int   sFogMode  = 1;      // gVRFogMode: 0 = no fog, 1 = world-distance fog, 2 = stock N64 fog
+static float sFogNearM = 150.0f; // where fog starts (m at life size)
+static float sFogFarM  = 500.0f; // where fog saturates (m at life size; the game's far plane is ~512 m,
+                                 // so ~500 also hides object pop-in at the draw limit like the N64 did)
 
 // 6DoF damping rest pose (capture after warmup so tracking has settled).
 static float sHeadRest[3] = { 0, 0, 0 };
@@ -362,7 +371,12 @@ static void vr_build_eye_matrix(int eye) {
     // is 12800 game units (Lib_InitPerspective).
     float worldHalfM = 12800.0f / sWorldScale;
     float zn = 0.02f;
-    float zf = worldHalfM * 3.0f + 5.0f;
+    // Draw distance: the base far clip already covers 3x the game's own far plane, so distant geometry isn't
+    // clipped - fog is what hides it (see gVRFogMode). gVRDrawDistance can push the clip further for edge cases,
+    // but default 1.0 keeps full z-precision (higher values trade precision -> z-fighting far out).
+    float drawDistMul = CVarGetFloat("gVRDrawDistance", 1.0f);
+    if (drawDistMul < 1.0f) drawDistMul = 1.0f;
+    float zf = worldHalfM * 3.0f * drawDistMul + 5.0f;
 
     // Use the runtime's NATIVE per-eye FOV. Canted-display headsets (Quest 3 / Quest Pro) angle the two
     // panels inward, and the OpenXR runtime reports a strongly ASYMMETRIC per-eye FOV to match. We used to
@@ -1104,8 +1118,10 @@ extern "C" float vr_get_hud_dist(void)      { return sHudDistM; }
 extern "C" void  vr_set_hud_dist(float v)   { sHudDistM = (v < 0.3f) ? 0.3f : (v > 20.0f ? 20.0f : v); }
 // Read the live CVar (not the cached sViewMode) so Engine's per-frame stereo/Theater gate matches the
 // eye-matrix build on the SAME frame - avoids a one-frame mismatched render when switching modes. Clamped.
-extern "C" int   vr_get_view_mode(void)     { int m = CVarGetInteger("gVRViewMode", sViewMode); return (m < 0) ? 0 : (m > 3 ? 3 : m); }
-extern "C" void  vr_set_view_mode(int m)    { sViewMode = (m < 0) ? 0 : (m > 3 ? 3 : m); }
+extern "C" int   vr_get_view_mode(void)     { int m = CVarGetInteger("gVRViewMode", sViewMode); return (m < 0) ? 0 : (m > 4 ? 4 : m); }
+// Setter also writes the CVar, since vr_get_view_mode reads the CVar first - lets the right-stick
+// mode-cycle (sys_joybus) and the menus all share one source of truth.
+extern "C" void  vr_set_view_mode(int m)    { sViewMode = (m < 0) ? 0 : (m > 4 ? 4 : m); CVarSetInteger("gVRViewMode", sViewMode); }
 // How far (GAME units) to push the camera back along the horizontal eye->at direction in Third Person
 // VR. The game's camera lookAt build moves the eye by this so distance reads as closer/further
 // (horizontal), not up/down. Converts the meters slider via the Third Person world scale. 0 unless VR
@@ -1119,6 +1135,33 @@ extern "C" float vr_third_person_push_units(void) {
 extern "C" float vr_fp_forward_game_units(void) {
     if (!sRunning || vr_get_view_mode() != VR_VIEW_FIRST_PERSON) return 0.0f;
     return sFPForwardCur * (sFirstPersonScale < 1.0f ? 1.0f : sFirstPersonScale);
+}
+// --- VR fog (the Fast3D interpreter consults these on every fog command) ------------------------
+// Stock N64 fog keys off the PROJECTED depth z/w, which the substituted per-eye projection breaks:
+// the factor saturates and drowns Third/First/Cockpit. The replacement factor is linear in clip-space
+// w instead - in a perspective projection w IS the eye-space view depth, so it is projection-
+// independent. Theater renders flat and Diorama's shrunk world pushes the stock range past anything
+// visible; both already look right, so they keep stock fog.
+// How the current pass should treat fog: 0 = no fog, 1 = world-distance fog, 2 = stock fog untouched.
+extern "C" int vr_fog_mode(void) {
+    if (!sRunning || sViewMode > VR_VIEW_COCKPIT) {
+        return 2;
+    }
+    return sFogMode;
+}
+// Coefficients for the world-distance factor: fog(0..255) = clamp(clip_w * mul + off). The eye matrix
+// bakes 1/scale into clip space, so a world point d life-size meters out lands at
+// clip_w = d * kLifeSizeScale / effScale - the near/far sliders convert through the active mode's scale.
+extern "C" void vr_fog_linear_coeffs(float* mul, float* off) {
+    const float kLifeSizeScale = 25.0f; // the default units-per-meter mapping the sliders assume
+    // Same scale the eye matrix uses per mode (Third and Cockpit share the global World Scale).
+    float effScale = (sViewMode == VR_VIEW_FIRST_PERSON) ? sFirstPersonScale : sWorldScale;
+    if (effScale < 1.0f) effScale = 1.0f;
+    float nearW = sFogNearM * kLifeSizeScale / effScale;
+    float farW  = sFogFarM * kLifeSizeScale / effScale;
+    if (farW < nearW + 0.01f) farW = nearW + 0.01f;
+    *mul = 255.0f / (farW - nearW);
+    *off = -nearW * (*mul);
 }
 extern "C" void  vr_reset_defaults(void) {
     sWorldScale = 25.0f; sStereoScale = 0.5f; sHeadScale = 1.0f; sEyeHeight = 0.16f;
@@ -1144,7 +1187,7 @@ extern "C" void vr_begin_frame(void) {
     sMenuDist    = CVarGetFloat("gVRMenuDist",    sMenuDist);
     sMenuSize    = CVarGetFloat("gVRMenuSize",    sMenuSize);
     sViewMode           = CVarGetInteger("gVRViewMode",      sViewMode);
-    if (sViewMode < 0) sViewMode = 0; else if (sViewMode > 3) sViewMode = 3;
+    if (sViewMode < 0) sViewMode = 0; else if (sViewMode > 4) sViewMode = 4;
     // Mixed Reality is a DIORAMA-ONLY experience (the shrunk tabletop in your room). While MR is enabled and
     // the runtime supports it, force Diorama so the other view modes can't fight it - the dropdown / D-pad are
     // effectively locked to Diorama until MR is switched off. Write the CVar back so the menu reflects it.
@@ -1172,6 +1215,10 @@ extern "C" void vr_begin_frame(void) {
     sDioramaDist        = CVarGetFloat("gVRDioramaDist",      sDioramaDist);
     sDioramaHeight      = CVarGetFloat("gVRDioramaHeight",    sDioramaHeight);
     sMenuOpacity        = CVarGetFloat("gVRMenuOpacity",      sMenuOpacity);
+    sFogMode            = CVarGetInteger("gVRFogMode",        sFogMode);
+    if (sFogMode < 0) sFogMode = 0; else if (sFogMode > 2) sFogMode = 2;
+    sFogNearM           = CVarGetFloat("gVRFogNear",          sFogNearM);
+    sFogFarM            = CVarGetFloat("gVRFogFar",           sFogFarM);
 
     // Mixed Reality toggle. Resume/pause the passthrough layer to match (it is created RUNNING, but MR
     // defaults OFF, so the first frame pauses it). Only meaningful when the runtime supports passthrough.

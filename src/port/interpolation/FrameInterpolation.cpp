@@ -443,6 +443,10 @@ void FrameInterpolation_StopRecord(void) {
 void FrameInterpolation_RecordOpenChild(const void* a, int b) {
     if (!is_recording)
         return;
+    // Guard: if the path ever underflowed to empty, back() would dereference invalid memory and the map
+    // insert below crashes (0xC0000005). Bail instead - worst case is a one-frame interpolation skip.
+    if (current_path.empty())
+        return;
     label key = { a, b };
     auto& m = current_path.back()->children[key];
     append(Op::OpenChild).open_child = { key, m.size() };
@@ -451,6 +455,11 @@ void FrameInterpolation_RecordOpenChild(const void* a, int b) {
 
 void FrameInterpolation_RecordCloseChild(void) {
     if (!is_recording)
+        return;
+    // Guard: never pop the root off the path. An unbalanced (extra) close would otherwise empty current_path
+    // and the next RecordOpenChild would crash on back(). Keeps the recorder crash-proof against any
+    // open/close imbalance in the draw code.
+    if (current_path.size() <= 1)
         return;
     // append(Op::CloseChild);
     if (has_inv_actor_mtx && current_path.size() == inv_actor_mtx_path_index) {

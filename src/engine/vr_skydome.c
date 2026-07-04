@@ -264,9 +264,16 @@ Gfx* build_sky_dome_vr(void) {
 extern bool vr_is_active(void); // src/port/vr/vr.h - true when the OpenXR session is rendering
 
 // True when the world-anchored dome should provide the sky: VR is live and the CVar is on. (Independent of
-// gVrSkyDomeGfx so the game can decide to draw the dome BEFORE it's built the first time.)
+// gVrSkyDomeGfx so the game can decide to draw the dome BEFORE it's built the first time.) The renderer asks
+// per background triangle, so the CVar lookup is cached for the frame instead of hitting the map every call.
 bool vr_sky_dome_active(void) {
-    return vr_is_active() && (CVarGetInteger("gVRSkyDome", 1) != 0);
+    static u32 sCachedFrame = 0xFFFFFFFF;
+    static bool sCachedOn = true;
+    if (gSysFrameCount != sCachedFrame) {
+        sCachedFrame = gSysFrameCount;
+        sCachedOn = CVarGetInteger("gVRSkyDome", 1) != 0;
+    }
+    return vr_is_active() && sCachedOn;
 }
 
 // Draw the sky dome as REAL WORLD GEOMETRY through the game's own camera, centred on the camera eye. This

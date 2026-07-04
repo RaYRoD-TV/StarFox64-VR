@@ -4,6 +4,7 @@
 #include "port/interpolation/FrameInterpolation.h"
 #include "port/hooks/Events.h"
 #include "port/mods/PortEnhancements.h"
+#include "port/vr/vr.h"
 
 Vec3f D_801616A0;
 Vec3f D_801616B0;
@@ -3801,12 +3802,22 @@ void HUD_Draw(void) {
         }
     }
 
-    if (gCamCount != 1) {
+    // VR: skip the 2D overlay (radar, gauges, rings, lives, radio box) while the native VR options menu
+    // is open - it stands alone on its panel - or when Hide HUD (gVRHideHud) is on for a clean view.
+    // Only the DRAWS are skipped: the incoming-message and radio-damage state machines still tick so
+    // radio prompts, call sfx and damage state don't freeze while the overlay is hidden.
+    if (vr_is_active() && (VrMenu_IsOpen() || (CVarGetInteger("gVRHideHud", 0) != 0))) {
+        if (gPlayState != PLAY_PAUSE) {
+            HUD_IncomingMsg_Update();
+            HUD_RadioDamage_Update();
+        }
+    } else if (gCamCount != 1) {
         HUD_VS_Radar();
+        HUD_RadioDamage();
     } else {
         HUD_SinglePlayer();
+        HUD_RadioDamage();
     }
-    HUD_RadioDamage();
     // While the native VR options overlay is open it stands alone: skip the stock pause screen's own UI
     // (course/driver change etc.) so it doesn't clutter or fight the menu. VrMenu_Update still runs from
     // the play loop, so opening/closing and unpausing are unaffected.
