@@ -55,6 +55,8 @@ Click the right stick any time to cycle:
 
 ## Tuning it to your taste
 
+![The in-headset VR options menu](docs/vr-menu.png)
+
 Two menus, same options:
 
 - **In the headset:** pause, then pull the **right trigger**. A scrollable list of every VR option -
