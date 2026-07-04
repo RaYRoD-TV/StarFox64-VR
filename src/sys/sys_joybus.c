@@ -114,6 +114,12 @@ static void Controller_MergeVr(void) {
     if (vr & VR_BTN_MENU) {
         b |= START_BUTTON;
     }
+    // Pause fallback: some controllers reach the game through a runtime's profile emulation with no
+    // menu button (PSVR2 Sense is the big one - its PS button belongs to the system), so the
+    // otherwise-unused LEFT-hand face buttons also pause. They have no flight duty, nothing is lost.
+    if (vr & (VR_BTN_X | VR_BTN_Y)) {
+        b |= START_BUTTON;
+    }
     vr_controller_stick(0, ls);
     vr_controller_stick(1, rs);
 
@@ -123,6 +129,11 @@ static void Controller_MergeVr(void) {
     }
     if (rs[1] < -0.5f) {
         b |= D_CBUTTONS;
+    }
+    // Right stick right = C-Right (answer ROB / incoming messages). Requires a clearly sideways
+    // push - the dominant-axis bias keeps diagonal boost/brake flicks from false-triggering it.
+    if ((rs[0] > 0.6f) && (rs[0] > (rs[1] < 0 ? -rs[1] : rs[1]) * 1.2f)) {
+        b |= R_CBUTTONS;
     }
 
     // Right stick CLICK steps to the next VR view mode (Third -> First -> Cockpit -> Diorama -> Theater ->

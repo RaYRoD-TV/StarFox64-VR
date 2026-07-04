@@ -1375,7 +1375,13 @@ void Display_PlayerFeatures(Player* player) {
                 Matrix_RotateY(gGfxMatrix, -gPlayer[gPlayerNum].camYaw, MTXF_APPLY);
                 Matrix_RotateX(gGfxMatrix, gPlayer[gPlayerNum].camPitch, MTXF_APPLY);
                 Matrix_SetGfxMtx(&gMasterDisp);
-                Display_LandmasterEngineGlow_Draw(player);
+                // VR First Person hides the player's own Arwing (Display_Arwing), so its engine glow
+                // must go too - otherwise boosting shows a disembodied exhaust flare where the ship
+                // would be. Other players' glows still draw.
+                if (!(vr_is_active() && (vr_get_view_mode() == VR_VIEW_FIRST_PERSON) &&
+                      (gPlayerNum == player->num))) {
+                    Display_LandmasterEngineGlow_Draw(player);
+                }
                 Matrix_Pop(&gGfxMatrix);
                 Display_BarrelRollShield(player);
                 Display_UnusedShield(player);
@@ -1406,6 +1412,12 @@ void Display_ArwingWingTrail_Draw(Player* player) {
     f32 sp54;
     f32 sp50;
     f32 yRot;
+
+    // VR First Person: the player's own ship is hidden, so its boost/brake wing contrails would hang
+    // in the air right behind the eye - skip them with it.
+    if (vr_is_active() && (vr_get_view_mode() == VR_VIEW_FIRST_PERSON) && (gPlayerNum == player->num)) {
+        return;
+    }
 
     if (player->wingPosition == 2) {
         sp5C = 108.0f;
@@ -1992,8 +2004,34 @@ void Display_Update(void) {
     camPlayer->camYaw = -Math_Atan2F(gPlayCamEye.x - gPlayCamAt.x, gPlayCamEye.z - gPlayCamAt.z);
     camPlayer->camPitch = -Math_Atan2F(gPlayCamEye.y - gPlayCamAt.y,
                                        sqrtf(SQ(gPlayCamEye.z - gPlayCamAt.z) + SQ(gPlayCamEye.x - gPlayCamAt.x)));
-    Matrix_RotateY(gCalcMatrix, -camPlayer->camYaw, MTXF_NEW);
-    Matrix_RotateX(gCalcMatrix, camPlayer->camPitch, MTXF_APPLY);
+    // VR "loop cam": in First Person, carry the view through the ship's somersault/loop pitch
+    // (aerobaticPitch) - the chase camera stays level during a loop, so without this the world just
+    // sweeps past in front of you. Pitching the AT point moves the real scene LookAt (both eyes, sky
+    // dome, starfield together); the up vector below is pitched by the same matrix so the view rolls
+    // over the top continuously instead of snapping when the loop passes vertical. Toggle: gVRLoopCam.
+    f32 upYaw = camPlayer->camYaw;
+    f32 upPitch = camPlayer->camPitch;
+    if (vr_is_active() && (vr_get_view_mode() == VR_VIEW_FIRST_PERSON) &&
+        (CVarGetInteger("gVRLoopCam", 1) != 0) && (camPlayer->aerobaticPitch != 0.0f)) {
+        Vec3f fwd;
+        f32 dx = gPlayCamAt.x - gPlayCamEye.x;
+        f32 dy = gPlayCamAt.y - gPlayCamEye.y;
+        f32 dz = gPlayCamAt.z - gPlayCamEye.z;
+        f32 dist = sqrtf(SQ(dx) + SQ(dy) + SQ(dz));
+
+        upPitch += camPlayer->aerobaticPitch * M_DTOR;
+        Matrix_RotateY(gCalcMatrix, -upYaw, MTXF_NEW);
+        Matrix_RotateX(gCalcMatrix, upPitch, MTXF_APPLY);
+        tempVec.x = 0.0f;
+        tempVec.y = 0.0f;
+        tempVec.z = -dist;
+        Matrix_MultVec3f(gCalcMatrix, &tempVec, &fwd);
+        gPlayCamAt.x = gPlayCamEye.x + fwd.x;
+        gPlayCamAt.y = gPlayCamEye.y + fwd.y;
+        gPlayCamAt.z = gPlayCamEye.z + fwd.z;
+    }
+    Matrix_RotateY(gCalcMatrix, -upYaw, MTXF_NEW);
+    Matrix_RotateX(gCalcMatrix, upPitch, MTXF_APPLY);
     // VR "flip cam": in First Person, roll the whole view by the ship's FULL bank (which includes barrel
     // rolls and inverted flight) instead of the damped camRoll, so you actually feel the ship roll over. It
     // rides the camera up-vector below into the scene LookAt, so both eyes AND the sky dome roll together.

@@ -820,6 +820,22 @@ void DrawEnhancementsMenu() {
                 .format = "%.1f",
                 .step = 0.1f,
             });
+            UIWidgets::CVarCheckbox("Loop Cam (First Person)", "gVRLoopCam", {
+                .tooltip = "Carry the view through loops and somersaults so you go over the top with the "
+                           "ship. Off = the camera stays level and the world sweeps past instead.",
+                .defaultValue = true,
+            });
+            UIWidgets::CVarSliderFloat("Cockpit Forward (m)", "gVRCockpitFwd", -5.0f, 20.0f, 0.0f, {
+                .tooltip = "Cockpit view: push your seat forward into the cockpit (the stock cockpit camera "
+                           "sits quite far back in VR).",
+                .format = "%.2f",
+                .step = 0.25f,
+            });
+            UIWidgets::CVarCheckbox("Cutscenes in VR", "gVRCutscenes", {
+                .tooltip = "Play cutscenes in full stereo instead of on the flat theater screen. The scripted "
+                           "camera sweeps can be intense - off is the comfortable default.",
+                .defaultValue = false,
+            });
             UIWidgets::CVarCheckbox("Hide HUD", "gVRHideHud", {
                 .tooltip = "Hide the 2D overlay (radar, gauges, rings, lives, boss health) for a clean "
                            "view. Radio messages and the aiming reticle stay.",

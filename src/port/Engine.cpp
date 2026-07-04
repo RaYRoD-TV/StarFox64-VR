@@ -719,12 +719,13 @@ void GameEngine::RunCommands(Gfx* Commands, const std::vector<std::unordered_map
         // ship going down) use scripted camera sweeps that read as sickness in stereo, so they go to the
         // comfortable virtual screen.
         const bool inPlay = (gGameState == GSTATE_PLAY);
-        // Only cutscenes force the flat panel now (scripted camera sweeps read as sickness in stereo). The
-        // native VR options overlay renders WITH the live stereo view behind it - the paused scene re-renders
-        // each frame off the current CVars, so every option (view mode, scale, stereo, sky, fog, ...) is
-        // visible in real time as you change it. The overlay panel is semi-transparent so the world shows
-        // through.
-        const bool cinematic = inPlay ? (VrGame_IsCinematic() != 0) : true;
+        // Only cutscenes force the flat panel now (scripted camera sweeps read as sickness in stereo) -
+        // unless gVRCutscenes opts into watching them in full stereo. The native VR options overlay renders
+        // WITH the live stereo view behind it - the paused scene re-renders each frame off the current
+        // CVars, so every option (view mode, scale, stereo, sky, fog, ...) is visible in real time as you
+        // change it. The overlay panel is semi-transparent so the world shows through.
+        const bool vrCutscenes = CVarGetInteger("gVRCutscenes", 0) != 0;
+        const bool cinematic = inPlay ? (VrGame_IsCinematic() != 0 && !vrCutscenes) : true;
         const bool stereo = inPlay && !cinematic && (vr_get_view_mode() != VR_VIEW_THEATER);
         static const std::unordered_map<Mtx*, MtxF> kEmptyMtx;
         const size_t steps = mtx_replacements.empty() ? 1 : mtx_replacements.size();
