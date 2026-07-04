@@ -87,4 +87,6 @@ edges - if something breaks or feels off, open an issue and I'll get on it.
 - [libultraship](https://github.com/Kenix3/libultraship) - the renderer/platform layer (this port
   uses a fork with the VR render hooks).
 
+More of my work - VR ports, reverse engineering, engine dev: [rayrodtv.com](https://rayrodtv.com/)
+
 Star Fox 64 is a Nintendo game; this project ships no game assets and does not condone piracy.
