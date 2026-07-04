@@ -35,6 +35,7 @@ cmake-build-*/
 .idea/
 .vs
 build*
+!build_vr.bat
 logs/
 /mods/
 starship.cfg.json

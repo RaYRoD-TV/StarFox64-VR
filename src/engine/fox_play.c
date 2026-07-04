@@ -22,6 +22,8 @@
 #include "assets/ast_area_6.h"
 #include "assets/ast_zoness.h"
 #include "port/hooks/Events.h"
+#include "vr_menu.h"
+#include "port/vr/vr.h"
 
 extern float gCurrentScreenWidth;
 extern float gCurrentScreenHeight;
@@ -7170,9 +7172,13 @@ void Play_Main(void) {
                 Play_Update();
             }
 
+            // Skip the level-start intro fly-in with START. Vanilla only allows this once the planet has
+            // been cleared (normalClear); gSkipLevelIntro (default on) drops that requirement so you can
+            // skip it on a fresh save too - handy in VR where sitting through every intro gets old fast.
             if ((gControllerPress[gMainController].button & START_BUTTON) &&
                 (gPlayer[0].state == PLAYERSTATE_LEVEL_INTRO) &&
-                gSaveFile.save.data.planet[sSaveSlotFromLevel[gCurrentLevel]].normalClear) {
+                (CVarGetInteger("gSkipLevelIntro", 1) ||
+                 gSaveFile.save.data.planet[sSaveSlotFromLevel[gCurrentLevel]].normalClear)) {
                 Audio_ClearVoice();
                 Audio_SetEnvSfxReverb(0);
                 Play_ClearObjectData();
@@ -7202,6 +7208,9 @@ void Play_Main(void) {
             break;
 
         case PLAY_PAUSE:
+            // VR options overlay: opens on Z while paused, and when open it consumes pad 0 below so the
+            // reticle toggle / unpause don't also fire. No-op outside VR or when the overlay is closed.
+            VrMenu_Update();
             if (!gVersusMode) {
                 if ((gControllerPress[gMainController].button & R_TRIG) && (gPlayer[0].form != FORM_BLUE_MARINE) &&
                     (gPlayer[0].state != PLAYERSTATE_STANDBY)) {
@@ -7230,5 +7239,23 @@ void Play_Main(void) {
             }
             gPauseEnabled = true;
             break;
+    }
+}
+
+// VR: is the player-1 camera under cinematic/cutscene control right now (not free flight)? The VR engine
+// loop routes these to the flat head-locked panel instead of stereo, so scripted camera sweeps (level
+// intros, level-complete fly-bys, warp-zone entries, boss set-pieces, the ship going down) don't drag
+// the view around in the headset. ACTIVE / U_TURN / NEXT are the player-driven flight states -> stereo.
+s32 VrGame_IsCinematic(void) {
+    if (gPlayer == NULL) {
+        return 1;
+    }
+    switch (gPlayer[0].state) {
+        case PLAYERSTATE_ACTIVE:
+        case PLAYERSTATE_U_TURN:
+        case PLAYERSTATE_NEXT:
+            return 0;
+        default:
+            return 1;
     }
 }

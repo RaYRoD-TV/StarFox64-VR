@@ -31,6 +31,7 @@
 #include "resource/importers/audio/SoundFontFactory.h"
 
 #include "port/interpolation/FrameInterpolation.h"
+#include "port/vr/vr.h"
 #include <Fast3D/Fast3dWindow.h>
 #include <DisplayListFactory.h>
 #include <TextureFactory.h>
@@ -43,6 +44,10 @@
 
 #include <Fast3D/interpreter.h>
 #include <filesystem>
+#if defined(ENABLE_VR) && defined(_WIN32)
+#include <SDL2/SDL.h>
+#include <imgui_impl_sdl2.h> // ImGui_ImplSDL2_SetGamepadMode - force the menu pad nav to (re)open the device
+#endif
 
 #ifdef __SWITCH__
 #include <port/switch/SwitchImpl.h>
@@ -128,6 +133,24 @@ GameEngine::GameEngine() {
     this->context->InitConfiguration();    // without this line InitConsoleVariables fails at Config::Reload()
     this->context->InitConsoleVariables(); // without this line the controldeck constructor failes in
                                            // ShipDeviceIndexMappingManager::UpdateControllerNamesFromConfig()
+
+#if defined(ENABLE_VR) && defined(_WIN32)
+    // VR: SDL_main decided whether to enable VR (--vr / --novr / headset auto-detect) and called
+    // vr_request_enable(). OpenXR binds to the WGL context, so force the OpenGL backend before the
+    // window is created (context->Init below reads Window.Backend.Id to choose the renderer).
+    if (vr_is_requested()) {
+        this->context->GetConfig()->SetInt("Window.Backend.Id", (int32_t)Ship::WindowBackend::FAST3D_SDL_OPENGL);
+        this->context->GetConfig()->SetString("Window.Backend.Name", "OpenGL");
+        SPDLOG_INFO("[VR] requested - forced OpenGL backend (OpenXR binds to WGL)");
+        // Gamepad menu navigation - the mouse cursor isn't usable in the headset, so the menu must be
+        // drivable with the controller. (LUS blocks game input itself while the menu is open with this on.)
+        CVarSetInteger("gControlNav", 1);
+        // VR steals OS focus to the compositor, so the desktop SDL window runs in the background. Without
+        // this, SDL stops updating gamepad state for the unfocused window and the ImGui menu nav goes dead.
+        SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+        CVarSave();
+    }
+#endif
 
     auto defaultMappings = std::make_shared<Ship::ControllerDefaultMappings>(
         // KeyboardKeyToButtonMappings - use built-in LUS defaults
@@ -447,6 +470,131 @@ void GameEngine::AudioExit() {
     audio.thread.join();
 }
 
+#if defined(ENABLE_VR) && defined(_WIN32)
+extern "C" GameState gGameState;    // src/engine/fox_game.c; GSTATE_PLAY == 7 (sf64thread.h)
+extern "C" s32 VrGame_IsCinematic(void); // src/engine/fox_play.c; 1 during scripted/cutscene camera
+extern "C" s32 VrMenu_IsOpen(void);      // src/engine/vr_menu.c; 1 while the native VR options overlay is up
+extern "C" Gfx* build_sky_dome_vr(void); // src/engine/vr_skydome.c; rebuilds the 3D sky dome DL for this frame
+extern "C" Gfx* gVrSkyDomeGfx;           // the built dome DL (null until built); passed to RunVrEye
+
+// Feed ImGui's menu gamepad navigation directly from the SDL controllers, INDEPENDENT of OS window
+// focus. In VR the headset compositor holds focus, so the desktop SDL window is "background" and ImGui's
+// SDL2 backend auto-read (SDL_GameControllerGetButton) returns 0 for every button -> menu renders but
+// gets no nav input. SDL_GameControllerUpdate() force-refreshes the pad state regardless of focus, then we
+// push the exact ImGuiKey_Gamepad* nav events ImGui needs. Co-exists with the auto-read (same keys agree).
+static void VrFeedImGuiGamepadNav() {
+    SDL_GameControllerUpdate(); // refresh pad state even when the SDL window is not the focused window
+    // Open + read ALL game controllers and MERGE their input, so whichever device is actually being
+    // held drives the menu (a phantom/virtual first pad can't starve nav).
+    SDL_GameController* pads[8];
+    int padCount = 0;
+    for (int i = 0, n = SDL_NumJoysticks(); i < n && padCount < 8; i++) {
+        if (SDL_IsGameController(i)) {
+            SDL_GameController* gc = SDL_GameControllerOpen(i); // ref-counted; same handles ControlDeck holds
+            if (gc) {
+                pads[padCount++] = gc;
+            }
+        }
+    }
+    if (padCount == 0) {
+        return;
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+    auto btn = [&](ImGuiKey key, SDL_GameControllerButton b) {
+        bool down = false;
+        for (int p = 0; p < padCount; p++) {
+            down |= SDL_GameControllerGetButton(pads[p], b) != 0;
+        }
+        io.AddKeyEvent(key, down);
+    };
+    auto axis = [&](ImGuiKey key, SDL_GameControllerAxis a, int lo, int hi) {
+        float best = 0.0f;
+        for (int p = 0; p < padCount; p++) {
+            float v = (float)(SDL_GameControllerGetAxis(pads[p], a) - lo) / (float)(hi - lo);
+            v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+            if (v > best) {
+                best = v;
+            }
+        }
+        io.AddKeyAnalogEvent(key, best > 0.1f, best);
+    };
+    const int dz = 8000; // stick dead zone (SDL's suggested value)
+    btn(ImGuiKey_GamepadDpadLeft, SDL_CONTROLLER_BUTTON_DPAD_LEFT);
+    btn(ImGuiKey_GamepadDpadRight, SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
+    btn(ImGuiKey_GamepadDpadUp, SDL_CONTROLLER_BUTTON_DPAD_UP);
+    btn(ImGuiKey_GamepadDpadDown, SDL_CONTROLLER_BUTTON_DPAD_DOWN);
+    btn(ImGuiKey_GamepadFaceDown, SDL_CONTROLLER_BUTTON_A); // activate / select
+    btn(ImGuiKey_GamepadFaceRight, SDL_CONTROLLER_BUTTON_B); // cancel / back
+    btn(ImGuiKey_GamepadFaceLeft, SDL_CONTROLLER_BUTTON_X);
+    btn(ImGuiKey_GamepadFaceUp, SDL_CONTROLLER_BUTTON_Y);
+    btn(ImGuiKey_GamepadL1, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+    btn(ImGuiKey_GamepadR1, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
+    axis(ImGuiKey_GamepadLStickLeft, SDL_CONTROLLER_AXIS_LEFTX, -dz, -32768);
+    axis(ImGuiKey_GamepadLStickRight, SDL_CONTROLLER_AXIS_LEFTX, +dz, +32767);
+    axis(ImGuiKey_GamepadLStickUp, SDL_CONTROLLER_AXIS_LEFTY, -dz, -32768);
+    axis(ImGuiKey_GamepadLStickDown, SDL_CONTROLLER_AXIS_LEFTY, +dz, +32767);
+}
+
+// Motion controllers drive the ImGui menu too: map their state onto ImGui's gamepad nav keys. The
+// left-stick CLICK feeds ImGuiKey_GamepadBack - libultraship's menubar toggle - so the settings menu
+// can be opened and closed from inside the headset; with the menu open, the left stick navigates and
+// A / right trigger activates, B / left trigger backs out.
+static void VrFeedImGuiFromVrControllers(bool menuOpen) {
+    if (!vr_controllers_active()) {
+        return;
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+    unsigned vb = vr_controller_buttons();
+    io.AddKeyEvent(ImGuiKey_GamepadBack, (vb & VR_BTN_LSTICK) != 0); // menubar toggle (see Gui::StartFrame)
+    if (!menuOpen) {
+        return;
+    }
+    io.AddKeyEvent(ImGuiKey_GamepadFaceDown, (vb & (VR_BTN_A | VR_BTN_RTRIGGER)) != 0);  // activate
+    io.AddKeyEvent(ImGuiKey_GamepadFaceRight, (vb & (VR_BTN_B | VR_BTN_LTRIGGER)) != 0); // cancel / back
+    float ls[2];
+    vr_controller_stick(0, ls);
+    io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, ls[0] < -0.1f, ls[0] < 0.0f ? -ls[0] : 0.0f);
+    io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, ls[0] > 0.1f, ls[0] > 0.0f ? ls[0] : 0.0f);
+    io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, ls[1] > 0.1f, ls[1] > 0.0f ? ls[1] : 0.0f);
+    io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, ls[1] < -0.1f, ls[1] < 0.0f ? -ls[1] : 0.0f);
+}
+
+// Compute the mouse position ImGui should use, INDEPENDENT of OS window focus/hover, so the software
+// cursor (io.MouseDrawCursor) always renders on the VR menu panel. ImGui's SDL2 backend only updates
+// io.MousePos while the window is focused or hovered; in VR the headset compositor usually holds focus,
+// so the moment the OS cursor drifts off the unfocused game window the backend pushes a mouse-leave
+// (MousePos = -FLT_MAX) and ImGui stops drawing the cursor. Read the global mouse and clamp it into the
+// window rect so the cursor pins to the panel edge instead of vanishing. With multi-viewports enabled
+// ImGui expects ABSOLUTE desktop coordinates; without, window-local.
+static bool VrComputeImGuiMousePos(float* outX, float* outY) {
+    SDL_Window* win = SDL_GL_GetCurrentWindow();
+    if (win == nullptr) {
+        return false;
+    }
+    int gx = 0, gy = 0, wx = 0, wy = 0, ww = 0, wh = 0;
+    SDL_GetGlobalMouseState(&gx, &gy);
+    SDL_GetWindowPosition(win, &wx, &wy);
+    SDL_GetWindowSize(win, &ww, &wh);
+    int cx = gx, cy = gy; // clamp into the window rect, in global coords
+    if (cx < wx) {
+        cx = wx;
+    } else if (ww > 0 && cx > wx + ww - 1) {
+        cx = wx + ww - 1;
+    }
+    if (cy < wy) {
+        cy = wy;
+    } else if (wh > 0 && cy > wy + wh - 1) {
+        cy = wy + wh - 1;
+    }
+    const bool multiViewport = (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0;
+    *outX = (float)(multiViewport ? cx : cx - wx);
+    *outY = (float)(multiViewport ? cy : cy - wy);
+    return true;
+}
+#endif
+
 void GameEngine::RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>>& mtx_replacements) {
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
 
@@ -461,9 +609,151 @@ void GameEngine::RunCommands(Gfx* Commands, const std::vector<std::unordered_map
 
     interpreter->mInterpolationIndex = 0;
 
-    for (const auto& m : mtx_replacements) {
-        wnd->DrawAndRunGraphicsCommands(Commands, m);
-        interpreter->mInterpolationIndex++;
+#if defined(ENABLE_VR) && defined(_WIN32)
+    const bool vrActive = vr_is_requested() && vr_is_active();
+    if (vr_is_requested() && !vrActive) {
+        // Booting: advance the OpenXR session and close any frame it begins (safe no-op otherwise) so
+        // the active loop starts clean next frame; then fall through to the flat render so the desktop
+        // shows the game while VR spins up.
+        vr_begin_frame();
+        vr_submit();
+    }
+    if (vrActive) {
+        // One GUI cycle per game tick keeps input + the controller device handler alive. When the ImGui
+        // menu is open, render it once into a stable offscreen FBO and present it on the head-locked
+        // panel so it's usable in the headset; otherwise render the stereo / panel frame(s).
+        auto gui = wnd->GetGui();
+        const bool menuOpen = gui->GetMenuOrMenubarVisible();
+        float vrMouseX = 0.0f, vrMouseY = 0.0f;
+        bool vrMouseValid = false;
+        static bool sVrMenuNavArmed = false;
+        // Every frame (menu open or not) so the left-stick click can TOGGLE the menu from the headset.
+        VrFeedImGuiFromVrControllers(menuOpen);
+        if (menuOpen) {
+            ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+            // The OS cursor isn't visible inside the headset, so have ImGui draw its own software cursor
+            // into the menu texture -> it shows on the panel and tracks the mouse.
+            ImGui::GetIO().MouseDrawCursor = true;
+            // Focus-independent pad + mouse feeds: refresh + push nav events before StartDraw's
+            // ImGui::NewFrame consumes them.
+            VrFeedImGuiGamepadNav();
+            vrMouseValid = VrComputeImGuiMousePos(&vrMouseX, &vrMouseY);
+            if (vrMouseValid) {
+                ImGui::GetIO().AddMousePosEvent(vrMouseX, vrMouseY);
+            }
+            if (!sVrMenuNavArmed) {
+                // On menu open, force ImGui's SDL2 backend to (re)scan + open ALL controllers and MERGE
+                // their input, so the real pad in hand always drives nav even when a phantom/virtual
+                // device sits at index 0.
+                ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll);
+                sVrMenuNavArmed = true;
+            }
+        } else if (sVrMenuNavArmed) {
+            ImGui::GetIO().MouseDrawCursor = false;
+            sVrMenuNavArmed = false;
+        }
+        gui->StartDraw();
+        // Post-NewFrame override: ImGui::NewFrame (inside StartDraw) resolves the event queue with
+        // last-write-wins, and the SDL2 backend's own events (unclamped global pos when focused, or the
+        // window-leave -FLT_MAX) are queued AFTER our pre-StartDraw feed. Writing io.MousePos directly
+        // here makes our clamped position authoritative for hit-testing and the software cursor.
+        if (menuOpen && vrMouseValid) {
+            ImGui::GetIO().MousePos = ImVec2(vrMouseX, vrMouseY);
+        }
+        interpreter->StartFrame();
+        // Stereo per-eye render for the in-world view modes (Third/First Person, Diorama) while the game
+        // is actually being FLOWN; Theater, every non-gameplay screen (title, menus, map, game over), the
+        // ENDING sequence, and cutscenes render the flat frame once onto the head-locked panel. Cutscenes
+        // (VrGame_IsCinematic: level intros, level-complete fly-bys, warp entries, boss set-pieces, the
+        // ship going down) use scripted camera sweeps that read as sickness in stereo, so they go to the
+        // comfortable virtual screen.
+        const bool inPlay = (gGameState == GSTATE_PLAY);
+        // Cutscenes and the native VR options overlay both render on the flat panel: cutscenes for comfort,
+        // the overlay so it sits on a stable readable screen instead of the in-world HUD plane.
+        const bool cinematic = inPlay ? (VrGame_IsCinematic() != 0 || VrMenu_IsOpen() != 0) : true;
+        const bool stereo = inPlay && !cinematic && (vr_get_view_mode() != VR_VIEW_THEATER);
+        static const std::unordered_map<Mtx*, MtxF> kEmptyMtx;
+        const size_t steps = mtx_replacements.empty() ? 1 : mtx_replacements.size();
+        // The sky dome is drawn game-side now (fox_display.c Vr_DrawSkyDome, as real world geometry through
+        // the game camera), so the interpreter's separate dome pass is unused - pass nullptr.
+        Gfx* const skyDome = nullptr;
+        if (menuOpen) {
+            uint32_t winW = 0, winH = 0;
+            int32_t winX = 0, winY = 0;
+            interpreter->GetDimensions(&winW, &winH, &winX, &winY);
+            // Render the menu ONCE into its stable offscreen FBO.
+            vr_menu_render_begin((int)winW, (int)winH); // bind + clear the private FBO
+            gui->EndDraw();                             // render ImGui INTO that FBO
+            vr_menu_apply_opacity();                    // gVRImGuiOpacity -> see-through panel (no-op if opaque)
+            // CRITICAL: pace the SAME number of OpenXR frames as gameplay. One vr_begin_frame per tick
+            // would run game logic at the headset's refresh instead of its native rate, speeding the
+            // game up and garbling the audio. The menu panel (already rendered) is re-presented each
+            // paced frame; the live stereo world renders behind it so the game doesn't black out.
+            for (size_t s = 0; s < steps; s++) {
+                const auto& mtx = mtx_replacements.empty() ? kEmptyMtx : mtx_replacements[s];
+                vr_begin_frame();
+                if (stereo) {
+                    const int eyes = vr_eye_count();
+                    for (int e = 0; e < eyes; e++) {
+                        interpreter->RunVrEye(Commands, mtx, vr_eye_viewproj(e), vr_sky_viewproj(e),
+                                              vr_hud_viewproj(e), vr_full2d_viewproj(e), skyDome,
+                                              vr_eye_width(e), vr_eye_height(e));
+                        vr_submit_eye_texture(e, interpreter->GetVrFbTextureId(), vr_eye_width(e),
+                                              vr_eye_height(e));
+                    }
+                }
+                vr_menu_render_present((int)winW, (int)winH); // present the menu texture on the panel
+                vr_submit();
+                interpreter->mInterpolationIndex++;
+            }
+            vr_menu_mirror_desktop((int)winW, (int)winH); // mirror to the flatscreen ONCE (no per-step flicker)
+        } else {
+            // Render ONE OpenXR frame per frame-interpolation step. Each step re-locates the head pose
+            // (vr_begin_frame -> xrWaitFrame), paced by the headset, so the HMD runs at its native
+            // refresh with smooth head tracking while game logic stays at its native rate.
+            for (size_t s = 0; s < steps; s++) {
+                const auto& mtx = mtx_replacements.empty() ? kEmptyMtx : mtx_replacements[s];
+                vr_begin_frame();
+                if (stereo) {
+                    const int eyes = vr_eye_count();
+                    for (int e = 0; e < eyes; e++) {
+                        interpreter->RunVrEye(Commands, mtx, vr_eye_viewproj(e), vr_sky_viewproj(e),
+                                              vr_hud_viewproj(e), vr_full2d_viewproj(e), skyDome,
+                                              vr_eye_width(e), vr_eye_height(e));
+                        vr_submit_eye_texture(e, interpreter->GetVrFbTextureId(), vr_eye_width(e),
+                                              vr_eye_height(e));
+                    }
+                } else {
+                    vr_set_panel_mode(true);
+                    interpreter->RunVrPanel(Commands, mtx, vr_overlay_width(), vr_overlay_height());
+                    vr_submit_panel_texture(interpreter->GetVrFbTextureId(), vr_overlay_width(),
+                                            vr_overlay_height());
+                }
+                vr_submit();
+                interpreter->mInterpolationIndex++;
+            }
+            gui->EndDraw();
+            // Menu closed: mirror the rendered VR frame onto the flat window as the LAST fb0 write before
+            // the swap, so the desktop shows the game instead of flickering between stale back-buffers
+            // (the game renders into the OpenXR swapchains, never the live fb0). AFTER gui->EndDraw() so
+            // the GUI composite can't overwrite it; BEFORE EndFrame()'s SwapBuffers.
+            {
+                uint32_t mW = 0, mH = 0;
+                int32_t mX = 0, mY = 0;
+                interpreter->GetDimensions(&mW, &mH, &mX, &mY);
+                const int sw = stereo ? vr_eye_width(0) : vr_overlay_width();
+                const int sh = stereo ? vr_eye_height(0) : vr_overlay_height();
+                vr_mirror_game_desktop(interpreter->GetVrFbTextureId(), sw, sh, (int)mW, (int)mH);
+            }
+        }
+        interpreter->EndFrame(); // present/swap the desktop window
+    } else
+#endif
+    {
+        for (const auto& m : mtx_replacements) {
+            wnd->DrawAndRunGraphicsCommands(Commands, m);
+            interpreter->mInterpolationIndex++;
+        }
     }
 
     bool curAltAssets = CVarGetInteger("gEnhancements.Mods.AlternateAssets", 0);
@@ -534,7 +824,15 @@ void GameEngine::ProcessGfxCommands(Gfx* commands) {
 }
 
 uint32_t GameEngine::GetInterpolationFPS() {
-    if (CVarGetInteger("gMatchRefreshRate", 0)) {
+#if defined(ENABLE_VR) && defined(_WIN32)
+    // VR: target the headset's refresh so the per-eye render loop paces to the HMD (via xrWaitFrame)
+    // while game logic stays at its native rate. Using the monitor refresh here would desync game speed.
+    if (vr_is_active()) {
+        int hz = vr_display_refresh_hz();
+        return (uint32_t)(hz >= 30 ? hz : 72);
+    }
+#endif
+    if (CVarGetInteger("gMatchRefreshRate", 1)) { // default ON: run at the monitor's full refresh rate
         return Ship::Context::GetInstance()->GetWindow()->GetCurrentRefreshRate();
 
     } else if (CVarGetInteger("gVsyncEnabled", 1) ||
@@ -627,8 +925,39 @@ Fast::Interpreter* GameEngine_GetInterpreter() {
 }
 
 extern "C" float GameEngine_GetAspectRatio() {
+#if defined(ENABLE_VR) && defined(_WIN32)
+    // In VR the frame is rendered to a fixed-aspect eye/panel target, NOT the desktop window. 2D
+    // widescreen sizing (HUD edge anchoring, background extension) must match that target's aspect,
+    // or the game - which builds its display list while the interpreter still holds the window size -
+    // sizes the 2D to the window and leaves gaps on the panel/eye.
+    if (vr_is_active()) {
+        if (vr_get_view_mode() != VR_VIEW_THEATER && vr_eye_width(0) > 0 && vr_eye_height(0) > 0) {
+            return (float)vr_eye_width(0) / (float)vr_eye_height(0);
+        }
+        return (float)vr_overlay_width() / (float)vr_overlay_height();
+    }
+#endif
     auto interpreter = GameEngine_GetInterpreter();
     return interpreter->mCurDimensions.aspect_ratio;
+}
+
+// Final teardown on quit. vr_shutdown() releases OpenXR (a live session/instance keeps runtime threads
+// alive past window close, which can leave the process - and its console - running). No-op when VR is
+// off (all handles NULL-guarded).
+extern "C" void GameEngine_TerminateVr(void) {
+    vr_shutdown();
+}
+
+// Whether gamepad-shaped game input is currently blocked (the ImGui menu is open with controller
+// navigation on, or something registered an input block). The VR motion-controller merge feeds the
+// N64 pad directly - below libultraship's ControlDeck, which only blocks its own devices - so the
+// merge checks this itself to match: menu open -> the sticks drive the menu, not the ship.
+extern "C" bool GameEngine_GameInputBlocked(void) {
+    auto ctx = Ship::Context::GetInstance();
+    if (ctx == nullptr || ctx->GetControlDeck() == nullptr) {
+        return false;
+    }
+    return ctx->GetControlDeck()->GamepadGameInputBlocked();
 }
 
 extern "C" uint32_t GameEngine_GetGameVersion() {

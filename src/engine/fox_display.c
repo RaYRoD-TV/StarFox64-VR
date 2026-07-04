@@ -8,6 +8,9 @@
 #include "port/interpolation/FrameInterpolation.h"
 #include "port/hooks/list/EngineEvent.h"
 #include "port/mods/PortEnhancements.h"
+#include "port/vr/vr.h"
+
+void Vr_DrawSkyDome(f32 ex, f32 ey, f32 ez); // src/engine/vr_skydome.c - draws the dome as world geometry
 
 // f32 path1 = 0.0f;
 // f32 path2 = 0.0f;
@@ -1934,18 +1937,54 @@ void Display_Update(void) {
     tempVec.y = 100.0f;
     tempVec.z = 0.0f;
     Matrix_MultVec3f(gCalcMatrix, &tempVec, &playerCamUp);
-    if (gStarCount != 0) {
-        gStarfieldRoll = DEG_TO_RAD(gPlayer[0].camRoll);
-        Camera_SetStarfieldPos(gPlayCamEye.x, gPlayCamEye.y, gPlayCamEye.z, gPlayCamAt.x, gPlayCamAt.y, gPlayCamAt.z);
-        Background_DrawStarfield();
+    // VR skydome: push the player camera (world eye/at/up) to the VR layer so the 3D dome sweeps with the
+    // ship's heading as well as the head. When the dome is active it REPLACES the flat starfield/backdrop
+    // (which are screen-space and can't be world-anchored on pitch), so skip drawing them here.
+    {
+        f32 eye[3] = { gPlayCamEye.x, gPlayCamEye.y, gPlayCamEye.z };
+        f32 at[3] = { gPlayCamAt.x, gPlayCamAt.y, gPlayCamAt.z };
+        f32 up[3] = { playerCamUp.x, playerCamUp.y, playerCamUp.z };
+        vr_set_sky_camera(eye, at, up);
     }
-
-    Background_DrawBackdrop();
+    // When the dome is active it REPLACES the flat sky entirely: both the 2D starfield AND the flat cloud/
+    // panorama backdrop billboard (which is sized for the forward view and reveals its edges + fights the
+    // dome when you look around). The dome carries its own gradient + a world-anchored cloud band instead,
+    // so the whole sky is one 360deg layer that can't couple to the head. The sun stays (it's a real
+    // directional element).
+    if (!vr_sky_dome_active()) {
+        if (gStarCount != 0) {
+            gStarfieldRoll = DEG_TO_RAD(gPlayer[0].camRoll);
+            Camera_SetStarfieldPos(gPlayCamEye.x, gPlayCamEye.y, gPlayCamEye.z, gPlayCamAt.x, gPlayCamAt.y,
+                                   gPlayCamAt.z);
+            Background_DrawStarfield();
+        }
+        Background_DrawBackdrop();
+    }
     Background_DrawSun();
-    
+
     Matrix_Push(&gGfxMatrix);
-    Matrix_LookAt(gGfxMatrix, gPlayCamEye.x, gPlayCamEye.y, gPlayCamEye.z, gPlayCamAt.x, gPlayCamAt.y, gPlayCamAt.z,
-                  playerCamUp.x, playerCamUp.y, playerCamUp.z, MTXF_APPLY);
+    {
+        // VR Third Person distance: push the eye back along the HORIZONTAL eye->at direction (keeping
+        // height) so the "distance" knob reads as closer/further, not up/down. 0 outside Third Person
+        // VR (vr_third_person_push_units), so flat play and the other view modes are untouched.
+        f32 eyeX = gPlayCamEye.x, eyeY = gPlayCamEye.y, eyeZ = gPlayCamEye.z;
+        f32 pushUnits = vr_third_person_push_units();
+        if (pushUnits != 0.0f) {
+            f32 dx = eyeX - gPlayCamAt.x;
+            f32 dz = eyeZ - gPlayCamAt.z; // horizontal plane only (ignore Y so height is unchanged)
+            f32 len = sqrtf(dx * dx + dz * dz);
+            if (len > 0.01f) {
+                eyeX += (dx / len) * pushUnits;
+                eyeZ += (dz / len) * pushUnits;
+            }
+        }
+        Matrix_LookAt(gGfxMatrix, eyeX, eyeY, eyeZ, gPlayCamAt.x, gPlayCamAt.y, gPlayCamAt.z,
+                      playerCamUp.x, playerCamUp.y, playerCamUp.z, MTXF_APPLY);
+        // VR sky dome as world geometry, centred on the camera - drawn HERE (right after the lookAt, before
+        // any world objects) so it rides the same camera + eye projection as everything else and sits behind
+        // it. Uses the un-pushed camera eye so it stays centred regardless of the Third Person distance knob.
+        Vr_DrawSkyDome(gPlayCamEye.x, gPlayCamEye.y, gPlayCamEye.z);
+    }
 
     if ((gLevelType == LEVELTYPE_PLANET) || (gCurrentLevel == LEVEL_BOLSE)) {
         if ((gCurrentLevel == LEVEL_TITANIA) &&

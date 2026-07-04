@@ -6,4 +6,5 @@
 	url = https://github.com/HarbourMasters/Torch
 [submodule "libultraship"]
 	path = libultraship
-	url = https://github.com/Kenix3/libultraship.git
+	url = https://github.com/RaYRoD-TV/libultraship.git
+	branch = sf64-vr

@@ -55,6 +55,7 @@ f32 sGoldRingsFwork[20];
 s32 D_80161900[20];
 
 #include "global.h"
+#include "vr_menu.h"
 
 #include "assets/ast_bg_space.h"
 #include "assets/ast_bg_planet.h"
@@ -3806,7 +3807,13 @@ void HUD_Draw(void) {
         HUD_SinglePlayer();
     }
     HUD_RadioDamage();
-    HUD_PauseScreen_Update();
+    // While the native VR options overlay is open it stands alone: skip the stock pause screen's own UI
+    // (course/driver change etc.) so it doesn't clutter or fight the menu. VrMenu_Update still runs from
+    // the play loop, so opening/closing and unpausing are unaffected.
+    if (!VrMenu_IsOpen()) {
+        HUD_PauseScreen_Update();
+    }
+    VrMenu_Draw(); // native VR options overlay (drawn on top; only shows in VR, paused/open)
     gDPSetTextureFilter(gMasterDisp++, G_TF_BILERP);
     CALL_EVENT(DrawGlobalHUDPostEvent);
 }

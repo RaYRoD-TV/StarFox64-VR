@@ -43,7 +43,7 @@ include(cmake/automate-vcpkg.cmake)
 set(VCPKG_TRIPLET x64-windows-static)
 set(VCPKG_TARGET_TRIPLET x64-windows-static)
 vcpkg_bootstrap()
-vcpkg_install_packages(zlib bzip2 libzip libpng sdl2 glew glfw3 nlohmann-json tinyxml2 spdlog libogg libvorbis)
+vcpkg_install_packages(zlib bzip2 libzip libpng sdl2 glew glfw3 nlohmann-json tinyxml2 spdlog libogg libvorbis openxr-loader)
 
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -273,6 +273,17 @@ include_directories(
 add_subdirectory(libultraship ${CMAKE_CURRENT_SOURCE_DIR}/libultraship)
 add_dependencies(${PROJECT_NAME} libultraship)
 target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
+
+################################################################################
+# OpenXR (VR) - Windows only. Binds to libultraship's OpenGL backend via WGL.
+# Statically linked from vcpkg (openxr-loader), so no extra runtime DLLs ship.
+################################################################################
+if (WIN32)
+    find_package(OpenXR CONFIG REQUIRED)
+    find_package(GLEW REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PRIVATE OpenXR::openxr_loader GLEW::GLEW opengl32)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_VR=1 GLEW_STATIC)
+endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_compile_definitions(${PROJECT_NAME} PRIVATE

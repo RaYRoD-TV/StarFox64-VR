@@ -602,7 +602,12 @@ void DrawEnhancementsMenu() {
             });
             UIWidgets::CVarCheckbox("Use red radio backgrounds for enemies.", "gEnemyRedRadio");
             UIWidgets::CVarSliderInt("Cockpit Glass Opacity: %d", "gCockpitOpacity", 0, 255, 120);
-            
+            UIWidgets::CVarCheckbox("Skippable level intro", "gSkipLevelIntro", {
+                .tooltip = "Press START (the controller menu button in VR) during a level's opening fly-in to "
+                           "skip it, even on a fresh save. Off = vanilla, where you can only skip an intro after "
+                           "clearing that planet.",
+                .defaultValue = true
+            });
 
             ImGui::EndMenu();
         }
@@ -708,7 +713,132 @@ void DrawEnhancementsMenu() {
             ImGui::EndMenu();
         }
 
-        if (UIWidgets::BeginMenu("Accessibility")) { 
+        // VR options. The VR layer reads these CVars every frame, so changes apply live. Only useful
+        // while running in VR (headset connected, or forced with --vr).
+        if (UIWidgets::BeginMenu("VR")) {
+            static const char* vrViewModes[] = { "Third Person", "First Person", "Theater", "Diorama" };
+            UIWidgets::CVarCombobox("View Mode", "gVRViewMode", vrViewModes, {
+                .tooltip = "How the game is shown in VR. Third Person = the classic chase cam in stereo 3D; "
+                           "First Person = ride at the Arwing's cockpit; Theater = flat screen floating in "
+                           "front of you (most comfortable); Diorama = the level shrunk to a tabletop you "
+                           "lean around.",
+                .defaultIndex = 0,
+            });
+            UIWidgets::CVarSliderFloat("World Scale (units/m)", "gVRWorldScale", 5.0f, 2000.0f, 25.0f, {
+                .tooltip = "How big the world feels in Third Person. Smaller value = larger world. "
+                           "First Person and Diorama have their own scale knobs.",
+                .format = "%.0f",
+                .step = 5.0f,
+            });
+            UIWidgets::CVarSliderFloat("Third Person Distance (m)", "gVRThirdPersonDist", -15.0f, 50.0f, 0.0f, {
+                .tooltip = "Move the Third Person camera further behind the Arwing with positive values, or "
+                           "closer with negative. 0 = the game's stock chase distance.",
+                .format = "%.1f",
+                .step = 0.5f,
+            });
+            UIWidgets::CVarSliderFloat("Eye Height (m)", "gVREyeHeight", -1.0f, 1.0f, 0.16f, {
+                .tooltip = "Raise or lower the eye in Third Person. First Person has its own eye height.",
+                .format = "%.2f",
+                .step = 0.02f,
+            });
+            UIWidgets::CVarSliderFloat("First Person Forward (m)", "gVRFirstPersonFwd", -15.0f, 15.0f, 4.0f, {
+                .tooltip = "How far the eye is pushed toward the Arwing in First Person. Raise it a little "
+                           "at a time; if it moves the wrong way, use a negative value.",
+                .format = "%.2f",
+                .step = 0.25f,
+            });
+            UIWidgets::CVarSliderFloat("First Person World Scale (units/m)", "gVRFirstPersonScale", 5.0f, 500.0f,
+                                       25.0f, {
+                .tooltip = "How big the world feels in First Person. Separate from the main World Scale so it "
+                           "won't change Third Person. Lower = larger world.",
+                .format = "%.0f",
+                .step = 5.0f,
+            });
+            UIWidgets::CVarSliderFloat("First Person Eye Height (m)", "gVRFirstPersonEyeHeight", -1.0f, 1.0f,
+                                       0.0f, {
+                .tooltip = "Raise or lower the eye in First Person.",
+                .format = "%.2f",
+                .step = 0.02f,
+            });
+            UIWidgets::CVarSliderFloat("Diorama Distance (m)", "gVRDioramaDist", 0.1f, 3.0f, 0.25f, {
+                .tooltip = "How far in front of you the tabletop sits (Diorama mode).",
+                .format = "%.2f",
+                .step = 0.01f,
+            });
+            UIWidgets::CVarSliderFloat("Diorama World Scale (units/m)", "gVRDioramaWorldScale", 20.0f, 2000.0f,
+                                       800.0f, {
+                .tooltip = "Size of the tabletop world (Diorama mode). Higher = smaller tabletop.",
+                .format = "%.0f",
+                .step = 5.0f,
+            });
+            UIWidgets::CVarSliderFloat("Diorama Height (m)", "gVRDioramaHeight", -1.5f, 1.0f, -0.16f, {
+                .tooltip = "Raise or lower the tabletop to a comfortable height (Diorama mode).",
+                .format = "%.2f",
+                .step = 0.01f,
+            });
+            UIWidgets::CVarSliderFloat("Stereo Depth", "gVRStereo", 0.0f, 1.5f, 0.5f, {
+                .tooltip = "Stereo separation strength. Lower is gentler / less eye strain.",
+                .format = "%.2f",
+                .step = 0.05f,
+            });
+            UIWidgets::CVarSliderFloat("HUD Size", "gVRHudScale", 0.2f, 1.2f, 0.35f, {
+                .tooltip = "How much of your view the in-game HUD (radar, gauges, radio) fills. Smaller = "
+                           "more central.",
+                .format = "%.2f",
+                .step = 0.05f,
+            });
+            UIWidgets::CVarSliderFloat("HUD Distance (m)", "gVRHudDist", 0.5f, 8.0f, 2.9f, {
+                .format = "%.1f",
+                .step = 0.1f,
+            });
+            UIWidgets::CVarCheckbox("HUD Locked to World", "gVRHudWorldLock", {
+                .tooltip = "Pin the HUD plane to the room direction it was facing when enabled, so you can "
+                           "turn your head and look around it. Off = the HUD rides your face.",
+                .defaultValue = true,
+            });
+            UIWidgets::CVarSliderFloat("Menu Distance (m)", "gVRMenuDist", 1.0f, 8.0f, 3.2f, {
+                .format = "%.1f",
+                .step = 0.1f,
+            });
+            UIWidgets::CVarSliderFloat("Menu Size", "gVRMenuSize", 2.0f, 12.0f, 4.2f, {
+                .format = "%.1f",
+                .step = 0.2f,
+            });
+            UIWidgets::CVarSliderFloat("Settings Menu Opacity", "gVRImGuiOpacity", 0.3f, 1.0f, 1.0f, {
+                .tooltip = "How solid this settings menu is on the VR panel. 1.0 = opaque (recommended for "
+                           "readability).",
+                .format = "%.2f",
+                .step = 0.05f,
+            });
+            UIWidgets::CVarCheckbox("World-Anchored Sky Dome", "gVRSkyDome", {
+                .tooltip = "Replace the flat sky with a world-anchored 3D dome (blue sky + clouds on planets, "
+                           "stars in space) that stays put as you turn your head. Turn off for the flat game sky.",
+                .defaultValue = true,
+            });
+            UIWidgets::CVarSliderFloat("Sky Brightness", "gVRSkyBright", 0.2f, 2.0f, 1.0f, {
+                .tooltip = "Brightness of the dome sky gradient. Raise if it looks too dark/foggy, lower if too "
+                           "washed out.",
+                .format = "%.2f",
+                .step = 0.05f,
+            });
+            UIWidgets::CVarSliderFloat("Cloud Opacity", "gVRCloudAlpha", 0.0f, 3.0f, 1.0f, {
+                .tooltip = "How solid the dome clouds are (planet levels). 0 = no clouds, higher = thicker.",
+                .format = "%.2f",
+                .step = 0.1f,
+            });
+            UIWidgets::CVarSliderFloat("Cloud Coverage", "gVRCloudCover", 0.0f, 1.0f, 1.0f, {
+                .tooltip = "How much of the sky the dome clouds fill (planet levels). Lower = sparser, clearer sky.",
+                .format = "%.2f",
+                .step = 0.05f,
+            });
+            UIWidgets::CVarCheckbox("Mixed Reality (passthrough)", "gVRPassthrough", {
+                .tooltip = "Show your real room behind the game using headset passthrough (Quest). Locks the "
+                           "view to Diorama - the shrunk level sits on your table.",
+            });
+            ImGui::EndMenu();
+        }
+
+        if (UIWidgets::BeginMenu("Accessibility")) {
             UIWidgets::CVarCheckbox("Disable Gorgon (Area 6 boss) screen flashes", "gDisableGorgonFlash", {
                 .tooltip = "Gorgon flashes the screen repeatedly when firing its beam or when teleporting, which causes eye pain for some players and may be harmful to those with photosensitivity.",
                 .defaultValue = false
