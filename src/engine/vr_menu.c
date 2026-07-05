@@ -49,6 +49,7 @@ static const VrMenuRow kRows[] = {
     { "LOOP CAM",      "gVRLoopCam",              RT_TOGGLE, 0, 0, 0, 1 },
     { "COCKPIT FWD",   "gVRCockpitFwd",           RT_FLOATV, -5.0f, 20.0f, 0.25f, 0.0f },
     { "COCKPIT HT",    "gVRCockpitHeight",        RT_FLOATV, -2.0f, 5.0f, 0.05f, -0.15f },
+    { "COCKPIT GLASS", "gVRCockpitGlass",         RT_TOGGLE, 0, 0, 0, 1 },
     { "VR CUTSCENES",  "gVRCutscenes",            RT_TOGGLE, 0, 0, 0, 0 },
     { "DIORAMA DIST",  "gVRDioramaDist",          RT_FLOATV, 0.1f, 3.0f, 0.01f, 0.25f },
     { "DIORAMA SCALE", "gVRDioramaWorldScale",    RT_FLOATV, 20.0f, 2000.0f, 5.0f, 800.0f },

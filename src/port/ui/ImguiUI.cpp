@@ -837,6 +837,10 @@ void DrawEnhancementsMenu() {
                 .format = "%.2f",
                 .step = 0.05f,
             });
+            UIWidgets::CVarCheckbox("Cockpit Glass", "gVRCockpitGlass", {
+                .tooltip = "Show the canopy glass in Cockpit view. Turn off for a completely clear view.",
+                .defaultValue = true,
+            });
             UIWidgets::CVarCheckbox("Cutscenes in VR", "gVRCutscenes", {
                 .tooltip = "Play cutscenes in full stereo instead of on the flat theater screen. The scripted "
                            "camera sweeps can be intense - off is the comfortable default.",

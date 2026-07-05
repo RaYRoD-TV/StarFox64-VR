@@ -5155,7 +5155,12 @@ void Player_ArwingBoost(Player* player) {
             player->somersault = true;
             if (gLevelMode == LEVELMODE_ON_RAILS) {
                 player->savedAlternateView = player->alternateView;
-                player->alternateView = false;
+                // The stock game kicks to the external camera for the loop because its flat cockpit cam
+                // can't follow one. VR Cockpit mode stays seated: the VR loop cam pitches the view with
+                // the ship (the cockpit camera itself only tracks rot.x, not aerobaticPitch).
+                if (!(vr_is_active() && (vr_get_view_mode() == VR_VIEW_COCKPIT))) {
+                    player->alternateView = false;
+                }
             }
             player->unk_014 = player->unk_018 = 0.0f;
             if (player->aerobaticPitch > 340.0f) {

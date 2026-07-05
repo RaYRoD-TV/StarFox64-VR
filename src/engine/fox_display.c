@@ -2010,14 +2010,19 @@ void Display_Update(void) {
     // sweeps past in front of you. Pitching the AT point moves the real scene LookAt (both eyes, sky
     // dome, starfield together); the up vector below is pitched by the same matrix so the view rolls
     // over the top continuously instead of snapping when the loop passes vertical. Toggle: gVRLoopCam.
-    // Both First-Person camera extras (loop cam, flip cam) only apply while the player is actually
-    // FLYING: scripted scenes (level complete flybys, the post-Andross escape, warps) leave
-    // bankAngle / aerobaticPitch wherever the script parked them, and a stale 180 there turned the
-    // whole ending cutscene upside down.
-    s32 vrFpFlying = vr_is_active() && (vr_get_view_mode() == VR_VIEW_FIRST_PERSON) && (VrGame_IsCinematic() == 0);
+    // The VR camera extras (loop cam, flip cam) only apply while the player is actually FLYING:
+    // scripted scenes (level complete flybys, the post-Andross escape, warps) leave bankAngle /
+    // aerobaticPitch wherever the script parked them, and a stale 180 there turned the whole ending
+    // cutscene upside down.
+    s32 vrMode = vr_is_active() ? vr_get_view_mode() : -1;
+    s32 vrFlying = (vrMode >= 0) && (VrGame_IsCinematic() == 0);
+    s32 vrFpFlying = vrFlying && (vrMode == VR_VIEW_FIRST_PERSON);
     f32 upYaw = camPlayer->camYaw;
     f32 upPitch = camPlayer->camPitch;
-    if (vrFpFlying && (CVarGetInteger("gVRLoopCam", 1) != 0) && (camPlayer->aerobaticPitch != 0.0f)) {
+    // Loop cam covers First Person AND Cockpit: the cockpit camera tracks rot.x but not the
+    // somersault's aerobaticPitch (the stock game kicked to external for loops; VR stays seated).
+    if (vrFlying && ((vrMode == VR_VIEW_FIRST_PERSON) || (vrMode == VR_VIEW_COCKPIT)) &&
+        (CVarGetInteger("gVRLoopCam", 1) != 0) && (camPlayer->aerobaticPitch != 0.0f)) {
         Vec3f fwd;
         f32 dx = gPlayCamAt.x - gPlayCamEye.x;
         f32 dy = gPlayCamAt.y - gPlayCamEye.y;
@@ -2214,7 +2219,11 @@ void Display_Update(void) {
     Display_LockOnIndicator();
 
     if (sDrawCockpit) {
-        Display_CockpitGlass();
+        // VR: optional clear view - some players prefer the cockpit without the canopy glass
+        // (gVRCockpitGlass, default on). Flat play always keeps it.
+        if (!vr_is_active() || (CVarGetInteger("gVRCockpitGlass", 1) != 0)) {
+            Display_CockpitGlass();
+        }
     }
 
     for (i = 0, player = &gPlayer[0]; i < gCamCount; i++, player++) {
