@@ -125,8 +125,8 @@ static float sThirdPersonDist    = 0.0f;    // Third Person camera distance offs
                                             // the Arwing, - = closer. 0 = stock chase distance.
 static float sCockpitForward     = 0.0f;    // Cockpit-mode forward push (m): + = deeper into the cockpit
                                             // (the game's cockpit cam reads as far back in VR); tune live.
-static float sCockpitHeight      = 0.0f;    // Cockpit-mode eye raise (m): + = sit higher, so the moving
-                                            // cockpit frame stops blocking the view; tune live.
+static float sCockpitHeight      = -0.15f;  // Cockpit-mode eye raise (m): + = sit higher, - = lower; the
+                                            // slight default drop reads best against the moving frame.
 static float sDioramaWorldScale  = 800.0f;  // Diorama world scale (game units/m), INDEPENDENT of the global
                                             // World Scale so tuning the tabletop never touches Third/First
                                             // person. Higher = smaller tabletop.
