@@ -125,6 +125,8 @@ static float sThirdPersonDist    = 0.0f;    // Third Person camera distance offs
                                             // the Arwing, - = closer. 0 = stock chase distance.
 static float sCockpitForward     = 0.0f;    // Cockpit-mode forward push (m): + = deeper into the cockpit
                                             // (the game's cockpit cam reads as far back in VR); tune live.
+static float sCockpitHeight      = 0.0f;    // Cockpit-mode eye raise (m): + = sit higher, so the moving
+                                            // cockpit frame stops blocking the view; tune live.
 static float sDioramaWorldScale  = 800.0f;  // Diorama world scale (game units/m), INDEPENDENT of the global
                                             // World Scale so tuning the tabletop never touches Third/First
                                             // person. Higher = smaller tabletop.
@@ -366,8 +368,8 @@ static void vr_build_eye_matrix(int eye) {
         A[3][1] = sFirstPersonEyeHeight;
         A[3][2] = sFPForwardCur;    // eased toward the cockpit (see vr_begin_frame)
     } else if (sViewMode == 2) {    // Cockpit: the game's own in-cockpit camera sits a bit far back for
-        A[3][1] = sEyeHeight;       // VR - an adjustable forward push lets you sit where you like
-        A[3][2] = sCockpitForward;  // (same sign convention as the First Person forward).
+        A[3][1] = sEyeHeight + sCockpitHeight; // VR - adjustable forward push + raise let you sit where
+        A[3][2] = sCockpitForward;  // you like (forward uses the same sign convention as First Person).
     } else {                        // Third Person: own eye height. The camera DISTANCE is applied game-side
         A[3][1] = sEyeHeight;       // in the camera lookAt (vr_third_person_push_units) so it moves the
     }                               // camera HORIZONTALLY (closer/further), not up/down along the tilted view.
@@ -1217,6 +1219,7 @@ extern "C" void vr_begin_frame(void) {
     sFirstPersonEyeHeight = CVarGetFloat("gVRFirstPersonEyeHeight", sFirstPersonEyeHeight);
     sThirdPersonDist      = CVarGetFloat("gVRThirdPersonDist",      sThirdPersonDist);
     sCockpitForward       = CVarGetFloat("gVRCockpitFwd",           sCockpitForward);
+    sCockpitHeight        = CVarGetFloat("gVRCockpitHeight",        sCockpitHeight);
     sDioramaWorldScale    = CVarGetFloat("gVRDioramaWorldScale",    sDioramaWorldScale);
     sDioramaDist        = CVarGetFloat("gVRDioramaDist",      sDioramaDist);
     sDioramaHeight      = CVarGetFloat("gVRDioramaHeight",    sDioramaHeight);

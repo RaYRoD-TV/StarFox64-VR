@@ -625,6 +625,8 @@ static bool VrComputeImGuiMousePos(float* outX, float* outY) {
 
 // VR controller as a MOUSE POINTER for the ImGui menu: the RIGHT thumbstick glides a virtual cursor and the
 // RIGHT TRIGGER left-clicks. This is what makes the menu usable in the headset (there is no OS mouse there).
+// Regular gamepads drive the SAME cursor with their right stick + right trigger, so the menu works
+// identically when flying on a pad with the motion controllers asleep in their dock.
 // Returns the cursor in the coords ImGui expects (window-local, or absolute desktop with multi-viewports).
 static bool VrControllerImGuiMousePos(float* outX, float* outY) {
     static float cx = -1.0f, cy = -1.0f; // persistent virtual cursor, window-local pixels
@@ -642,8 +644,36 @@ static bool VrControllerImGuiMousePos(float* outX, float* outY) {
         cx = ww * 0.5f;
         cy = wh * 0.5f;
     }
-    float rs[2];
-    vr_controller_stick(1, rs); // right stick drives the pointer
+    float rs[2] = { 0.0f, 0.0f };
+    bool haveSource = false;
+    if (vr_controllers_active()) {
+        vr_controller_stick(1, rs); // right stick drives the pointer
+        haveSource = true;
+    }
+    bool padClick = false;
+    SDL_GameControllerUpdate(); // focus-independent, like the nav feed
+    for (int i = 0, n = SDL_NumJoysticks(); i < n; i++) {
+        if (!SDL_IsGameController(i)) {
+            continue;
+        }
+        SDL_GameController* gc = SDL_GameControllerOpen(i);
+        if (gc == nullptr) {
+            continue;
+        }
+        haveSource = true;
+        float px = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0f;
+        float py = -(SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0f); // SDL +y = down
+        if (fabsf(px) > fabsf(rs[0])) {
+            rs[0] = px;
+        }
+        if (fabsf(py) > fabsf(rs[1])) {
+            rs[1] = py;
+        }
+        padClick |= SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 8000;
+    }
+    if (!haveSource) {
+        return false; // no pointer device - let the desktop mouse drive
+    }
     const float speed = (float)ww * 0.011f; // pixels per frame at full deflection
     if (rs[0] > 0.15f || rs[0] < -0.15f) {
         cx += rs[0] * speed;
@@ -661,7 +691,7 @@ static bool VrControllerImGuiMousePos(float* outX, float* outY) {
     } else if (cy > wh - 1) {
         cy = (float)(wh - 1);
     }
-    ImGui::GetIO().AddMouseButtonEvent(0, (vr_controller_buttons() & VR_BTN_RTRIGGER) != 0); // trigger = click
+    ImGui::GetIO().AddMouseButtonEvent(0, ((vr_controller_buttons() & VR_BTN_RTRIGGER) != 0) || padClick);
     const bool multiViewport = (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0;
     *outX = multiViewport ? (cx + wx) : cx;
     *outY = multiViewport ? (cy + wy) : cy;
@@ -712,11 +742,11 @@ void GameEngine::RunCommands(Gfx* Commands, const std::vector<std::unordered_map
             // Focus-independent pad + mouse feeds: refresh + push nav events before StartDraw's
             // ImGui::NewFrame consumes them.
             VrFeedImGuiGamepadNav();
-            // Prefer the VR controller as the pointer (right stick = cursor, right trigger = click); fall back
-            // to the desktop mouse when no motion controllers are present.
-            if (vr_controllers_active()) {
-                vrMouseValid = VrControllerImGuiMousePos(&vrMouseX, &vrMouseY);
-            } else {
+            // Prefer a controller as the pointer - motion controllers or a regular gamepad, right
+            // stick = cursor, right trigger = click; fall back to the desktop mouse when neither is
+            // present (VrControllerImGuiMousePos returns false with no device).
+            vrMouseValid = VrControllerImGuiMousePos(&vrMouseX, &vrMouseY);
+            if (!vrMouseValid) {
                 vrMouseValid = VrComputeImGuiMousePos(&vrMouseX, &vrMouseY);
             }
             if (vrMouseValid) {

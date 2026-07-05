@@ -831,6 +831,12 @@ void DrawEnhancementsMenu() {
                 .format = "%.2f",
                 .step = 0.25f,
             });
+            UIWidgets::CVarSliderFloat("Cockpit Height (m)", "gVRCockpitHeight", -2.0f, 5.0f, 0.0f, {
+                .tooltip = "Cockpit view: raise your seat in small steps so the moving cockpit frame stops "
+                           "blocking the view.",
+                .format = "%.2f",
+                .step = 0.05f,
+            });
             UIWidgets::CVarCheckbox("Cutscenes in VR", "gVRCutscenes", {
                 .tooltip = "Play cutscenes in full stereo instead of on the flat theater screen. The scripted "
                            "camera sweeps can be intense - off is the comfortable default.",

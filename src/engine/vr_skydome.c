@@ -273,10 +273,18 @@ bool vr_sky_dome_active(void) {
         sCachedFrame = gSysFrameCount;
         sCachedOn = CVarGetInteger("gVRSkyDome", 1) != 0;
     }
-    // Inside Andross' arena the scrolling backdrop IS the level - the boss floats in it. Replacing it
-    // with the generic dome leaves the head hanging in empty space, so that stage keeps its own sky.
-    if (gCurrentLevel == LEVEL_VENOM_ANDROSS) {
-        return false;
+    // Some stages keep their own backdrop instead of the dome: the generic blue-sky/cloud gradient is
+    // plain wrong there. Aquas is underwater (dark), the Venom routes have their dark orange cloud
+    // panoramas, and inside Andross' arena the scrolling swirl IS the level - the dome left the boss
+    // floating in empty space.
+    switch (gCurrentLevel) {
+        case LEVEL_AQUAS:
+        case LEVEL_VENOM_1:
+        case LEVEL_VENOM_2:
+        case LEVEL_VENOM_ANDROSS:
+            return false;
+        default:
+            break;
     }
     return vr_is_active() && sCachedOn;
 }
