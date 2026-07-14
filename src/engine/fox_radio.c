@@ -190,6 +190,11 @@ void Radio_CalculatePositions() {
 
 s32 sRadioUseRedBox;
 
+// The portrait the radio box is showing this frame, for the VR cockpit's dash comm screen
+// (fox_display.c Vr_DrawCockpitComm). NULL while the box is closed. The talking-mouth frames arrive
+// through gCurrentRadioPortrait's id alternation, so the dash face animates with the voice for free.
+u16* gVrRadioPortraitTex = NULL;
+
 void func_radio_800BAAE8(void) {
     static f32 D_800D4A74 = -1.0f;
     u16* radioPortraitTex = NULL;
@@ -452,6 +457,7 @@ void func_radio_800BAAE8(void) {
             }
             break;
     }
+    gVrRadioPortraitTex = ((radioPortraitTex != NULL) && (gRadioPortraitScaleY > 0.0f)) ? radioPortraitTex : NULL;
     if ((radioPortraitTex != NULL) && (gRadioPortraitScaleY != 0.0f)) {
         temp_fa0 = (2.0f * gRadioPortraitScaleY) + gRadioPortraitPosY;
         if ((gRadioPortraitPosY + 20.0f) <= temp_fa0) {

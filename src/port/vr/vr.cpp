@@ -1101,6 +1101,15 @@ static void vr_poll_events(void) {
             }
         } else if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
             vr_log_active_profiles(); // which controller profile each hand actually bound to
+        } else if (ev.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+            // The user recentered (or the runtime re-established tracking): LOCAL space is about to move,
+            // so every pose captured in the old space is stale. Without this the theater/menu panel keeps
+            // its old yaw - it can end up flat-out BEHIND the player after a recenter - and the 6DoF rest
+            // pose damps against a position that no longer means "seated here".
+            sPanelAnchorValid = false;
+            sHeadRestSet = false;
+            sHeadWarmup = 0;
+            printf("[VR] reference space recentered; anchors reset.\n");
         }
         ev.type = XR_TYPE_EVENT_DATA_BUFFER;
     }

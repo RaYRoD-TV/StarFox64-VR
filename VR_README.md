@@ -30,19 +30,26 @@ The VR controllers work as the first pad, in gameplay and in every menu:
 - left grip: bank left - double-squeeze for a barrel roll left (Z)
 - right grip: bank right - double-squeeze for a barrel roll right (R)
 - right stick forward: boost; right stick back: brake
-- right stick click or X: the game's cockpit view toggle (C-Up)
+- right stick right (a clear sideways flick): answer ROB and incoming radio calls (C-Right)
+- right stick click: step to the next view mode
 - left stick click: open / close the settings menu (it shows on a panel in the headset)
 - menu button: pause (Start)
+- Y: answer ROB and incoming radio calls (C-Right)
+- X: pause - for controllers whose menu button belongs to the system (PSVR2)
+
+Right Stick Turning (off by default, in both option menus) adds steering on the right stick's X axis;
+it retires the flick-to-answer gesture so a hard turn can't answer a call - Y still answers.
 
 A regular gamepad or the keyboard keeps working alongside them; per axis the stronger source wins.
 Rumble from the game reaches both controllers.
 
 ## View modes
 
-Third Person (the chase cam in stereo, default), First Person (eye pushed up to the Arwing - pair it
-with the game's own C-Up cockpit view), Theater (flat screen floating in front of you, max comfort),
-and Diorama (the level shrunk to a tabletop - a great fit for all-range arenas). Mixed Reality
-passthrough (Quest) puts the Diorama tabletop in your real room.
+Third Person (the chase cam in stereo, default), First Person (riding at the pilot's seat), Cockpit
+(the game's own in-cockpit camera, with dash comm screen, adjustable seat and optional glass), Diorama
+(the level shrunk to a tabletop - a great fit for all-range arenas), and Theater (flat screen floating
+in front of you, max comfort). Mixed Reality passthrough (Quest) puts the Diorama tabletop in your
+real room.
 
 ## VR settings
 
@@ -53,8 +60,8 @@ turns on automatically in VR); the mouse works on it too.
 
 There is also a native in-headset options overlay for the essentials, drawn in the game's own font so
 it always lands on the head-locked panel: pause the game (menu button / Start), then pull the RIGHT
-TRIGGER. The left stick moves between rows, left/right changes a value, and A activates. It closes with
-the right trigger, B, or by unpausing.
+TRIGGER - or press R on a regular gamepad. The left stick or D-pad moves between rows, left/right
+changes a value, and A activates. It closes with the button that opened it, B, or by unpausing.
 
 ## Building
 

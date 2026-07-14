@@ -2,16 +2,17 @@
 // Drawn with the game's own large-font text (Graphics_DisplayLargeText) so it lands on the VR
 // head-locked panel automatically, and edits the same VR CVars as the desktop Enhancements > VR menu.
 //
-// Open it while PAUSED by pulling the RIGHT TRIGGER on the motion controllers. The left stick up/down moves
-// the highlight (the list SCROLLS - it holds more rows than fit), left/right changes the highlighted value,
-// and A activates DEFAULTS / RESUME or cycles VIEW MODE. The right trigger or B closes it. It is only
-// reachable while paused, so it can never fight live flight input, and it force-closes the instant you
-// unpause - there is no way to get stuck in it.
+// Open it while PAUSED with the RIGHT TRIGGER on the motion controllers, or the R button on a regular
+// gamepad. Stick (or D-pad) up/down moves the highlight (the list SCROLLS - it holds more rows than fit),
+// left/right changes the highlighted value, and A activates DEFAULTS / RESUME or cycles VIEW MODE. The
+// opening button or B closes it. It is only reachable while paused, so it can never fight live flight
+// input, and it force-closes the instant you unpause - there is no way to get stuck in it.
 #include "global.h"
 #include <stdio.h>
 #include <string.h>
 #include "vr_menu.h"
 #include "port/vr/vr.h"
+#include "properties.h" // VR_PORT_VERSION_CAPS - the release version shown in the menu header
 
 // The game's 2D large-font string renderer (fox_std_lib.c) - charset is A-Z, 0-9, space, '.', '-'.
 extern void Graphics_DisplayLargeText(s32 xPos, s32 yPos, f32 xScale, f32 yScale, char* text);
@@ -47,9 +48,11 @@ static const VrMenuRow kRows[] = {
     { "FP EYE HT",     "gVRFirstPersonEyeHeight", RT_FLOATV, -1.0f, 1.0f, 0.02f, 0.0f },
     { "FLIP CAM",      "gVRFlipCam",              RT_TOGGLE, 0, 0, 0, 1 },
     { "LOOP CAM",      "gVRLoopCam",              RT_TOGGLE, 0, 0, 0, 1 },
+    { "RS TURN",       "gVRRightStickTurn",       RT_TOGGLE, 0, 0, 0, 0 },
     { "COCKPIT FWD",   "gVRCockpitFwd",           RT_FLOATV, -5.0f, 20.0f, 0.25f, 0.0f },
     { "COCKPIT HT",    "gVRCockpitHeight",        RT_FLOATV, -2.0f, 5.0f, 0.05f, -0.15f },
     { "COCKPIT GLASS", "gVRCockpitGlass",         RT_TOGGLE, 0, 0, 0, 1 },
+    { "COMM SCREEN",   "gVRCockpitComm",          RT_TOGGLE, 0, 0, 0, 1 },
     { "VR CUTSCENES",  "gVRCutscenes",            RT_TOGGLE, 0, 0, 0, 0 },
     { "DIORAMA DIST",  "gVRDioramaDist",          RT_FLOATV, 0.1f, 3.0f, 0.01f, 0.25f },
     { "DIORAMA SCALE", "gVRDioramaWorldScale",    RT_FLOATV, 20.0f, 2000.0f, 5.0f, 800.0f },
@@ -59,13 +62,14 @@ static const VrMenuRow kRows[] = {
     { "HUD DIST",      "gVRHudDist",              RT_FLOATV, 0.5f, 8.0f, 0.1f, 2.9f },
     { "HIDE HUD",      "gVRHideHud",              RT_TOGGLE, 0, 0, 0, 0 },
     { "SKY DOME",      "gVRSkyDome",              RT_TOGGLE, 0, 0, 0, 1 },
+    { "BACKDROP",      "gVRLevelBackdrop",        RT_TOGGLE, 0, 0, 0, 1 },
     { "SKY BRIGHT",    "gVRSkyBright",            RT_FLOATV, 0.2f, 2.0f, 0.05f, 1.0f },
     { "CLOUD ALPHA",   "gVRCloudAlpha",           RT_FLOATV, 0.0f, 3.0f, 0.1f, 1.0f },
     { "CLOUD COVER",   "gVRCloudCover",           RT_FLOATV, 0.0f, 1.0f, 0.05f, 1.0f },
     { "FOG",           "gVRFogMode",              RT_FOG,    0, 0, 0, 1 },
     { "FOG NEAR",      "gVRFogNear",              RT_FLOATV, 0.0f, 2000.0f, 25.0f, 150.0f },
     { "FOG FAR",       "gVRFogFar",               RT_FLOATV, 50.0f, 5000.0f, 25.0f, 500.0f },
-    { "NO CULLING",    "gVRDisableCulling",       RT_TOGGLE, 0, 0, 0, 0 },
+    { "NO BACKFACE",   "gVRDisableCulling",       RT_TOGGLE, 0, 0, 0, 0 },
     { "DRAW DIST",     "gVRDrawDistance",         RT_FLOATV, 1.0f, 8.0f, 0.5f, 1.0f },
     { "RESOLUTION",    "gInternalResolution",     RT_FLOATV, 0.5f, 4.0f, 0.1f, 1.0f },
     { "COCKPIT FLOOR", "gVRCockpitFloor",         RT_TOGGLE, 0, 0, 0, 1 },
@@ -196,51 +200,108 @@ static void consume_pad0(void) {
     gControllerHold[0].stick_x = gControllerHold[0].stick_y = 0;
 }
 
-static unsigned sPrevBtns = 0; // last frame's VR button mask, for edge detection
+// Blank only the derived PRESS state for this tick. Unlike consume_pad0 this leaves the hold state
+// alone, so sys_joybus's next edge derivation sees the true previous frame and the phantom-press
+// chain a zeroed hold state manufactures ends here instead of re-arming every tick.
+static void swallow_press0(void) {
+    gControllerPress[0].button = 0;
+    gControllerPress[0].stick_x = gControllerPress[0].stick_y = 0;
+}
 
-// The native VR menu is driven DIRECTLY off the motion controllers (not the merged N64 pad), so the trigger
-// meaning is unambiguous and the pause screen never competes for the same buttons. Opened while paused with
-// the RIGHT TRIGGER. Left stick navigates (scrolls), A activates, right trigger / B closes. When open it
-// renders on the flat panel (VrMenu_IsOpen -> Engine.cpp) and the pause screen's own UI is suppressed
-// (fox_hud.c), so it stands alone.
+static unsigned sPrevBtns = 0; // last frame's VR button mask, for edge detection
+static u16 sPrevPadBtns = 0;   // last frame's RAW gamepad hold mask - our own edge base. gControllerPress
+                               // can't be used here: sys_joybus derives it with gControllerHold as the
+                               // previous state, and consume_pad0 zeroes that - so a HELD button would
+                               // read as freshly pressed every tick and R would flap the menu open/closed.
+static s32 sSwallowTick = 0;   // 1 = the menu closed last tick; swallow one more pad tick, because the
+                               // zeroed hold state makes sys_joybus re-report every still-held button as
+                               // a fresh press (R would toggle the pause screen's reticles on close).
+
+// The native VR menu reads its own inputs (not the pause screen's), so the trigger meaning is unambiguous
+// and the pause UI never competes for the same buttons. With motion controllers: opened while paused with
+// the RIGHT TRIGGER, left stick navigates, A activates, right trigger / B closes. With a regular gamepad
+// the merged N64 pad drives the same scheme: R opens/closes, stick or D-pad navigates, A activates, B
+// closes. When open it renders on the flat panel (VrMenu_IsOpen -> Engine.cpp) and the pause screen's own
+// UI is suppressed (fox_hud.c), so it stands alone.
 void VrMenu_Update(void) {
     unsigned btns, edge;
     float ls[2];
-    s32 up, down, left, right, activate, close;
+    s32 up, down, left, right, activate, close, openMenu;
+    s32 vrPads;
 
-    // Requires live motion controllers; without them use the desktop Enhancements > VR menu instead.
-    if (!vr_is_active() || !vr_controllers_active()) {
+    if (!vr_is_active()) {
         sOpen = 0;
         sPrevBtns = 0;
+        sPrevPadBtns = 0;
+        sSwallowTick = 0;
         return;
     }
+    vrPads = vr_controllers_active();
     // Only reachable while paused -> never competes with live flight input, and auto-closes on unpause.
+    // Tracking the raw hold mask here means pausing with a button already down can't edge-fire the menu.
     if (gPlayState != PLAY_PAUSE) {
         sOpen = 0;
-        sPrevBtns = vr_controller_buttons();
+        sPrevBtns = vrPads ? vr_controller_buttons() : 0;
+        sPrevPadBtns = gControllerHold[0].button;
+        sSwallowTick = 0;
         return;
     }
 
-    btns = vr_controller_buttons();
-    edge = btns & ~sPrevBtns; // freshly pressed this frame
-    sPrevBtns = btns;
+    if (vrPads) {
+        btns = vr_controller_buttons();
+        edge = btns & ~sPrevBtns; // freshly pressed this frame
+        sPrevBtns = btns;
+        sPrevPadBtns = gControllerHold[0].button;
+        openMenu = (edge & VR_BTN_RTRIGGER) != 0;
+        activate = (edge & VR_BTN_A) != 0;
+        close = (edge & (VR_BTN_RTRIGGER | VR_BTN_B)) != 0;
+        vr_controller_stick(0, ls); // left stick, -1..1 (+y up)
+    } else {
+        // Regular gamepad: the merged N64 pad, edge-detected against our OWN previous-frame copy of
+        // the raw hold mask (see sPrevPadBtns above for why gControllerPress is off limits). D-pad
+        // holds fold into the stick axes and share the same repeat throttle.
+        u16 hold = gControllerHold[0].button;
+        u16 padEdge = hold & ~sPrevPadBtns;
+        sPrevPadBtns = hold;
+        sPrevBtns = 0;
+        openMenu = (padEdge & R_TRIG) != 0;
+        activate = (padEdge & A_BUTTON) != 0;
+        close = (padEdge & (R_TRIG | B_BUTTON)) != 0;
+        ls[0] = gControllerHold[0].stick_x / 80.0f; // N64 stick range ~ +-80, +y up
+        ls[1] = gControllerHold[0].stick_y / 80.0f;
+        if (hold & L_JPAD) {
+            ls[0] = -1.0f;
+        }
+        if (hold & R_JPAD) {
+            ls[0] = 1.0f;
+        }
+        if (hold & U_JPAD) {
+            ls[1] = 1.0f;
+        }
+        if (hold & D_JPAD) {
+            ls[1] = -1.0f;
+        }
+    }
 
     if (!sOpen) {
-        if (edge & VR_BTN_RTRIGGER) { // RIGHT TRIGGER opens it while paused
+        if (sSwallowTick) {
+            sSwallowTick = 0;
+            swallow_press0(); // the phantom-press tick right after closing (see sSwallowTick above)
+        }
+        if (openMenu) { // right trigger (or gamepad R) opens it while paused
             sOpen = 1;
             sSel = 0;
             sScroll = 0;
             sNavCd = 0;
-            consume_pad0(); // swallow the trigger's merged press so the pause screen doesn't see it
+            consume_pad0(); // swallow the opening press so the pause screen doesn't see it
         }
         return;
     }
 
-    // --- navigation: throttled repeat from the left stick, actions on the edge ---
+    // --- navigation: throttled repeat from the stick, actions on the edge ---
     if (sNavCd > 0) {
         sNavCd--;
     }
-    vr_controller_stick(0, ls); // left stick, -1..1 (+y up)
     up = down = left = right = 0;
     if (sNavCd == 0) {
         if (ls[1] > 0.5f) {
@@ -256,8 +317,6 @@ void VrMenu_Update(void) {
             sNavCd = 8; // ~0.13s between repeats
         }
     }
-    activate = (edge & VR_BTN_A) != 0;
-    close = (edge & (VR_BTN_RTRIGGER | VR_BTN_B)) != 0;
 
     if (up) {
         sSel = (sSel + ROW_COUNT - 1) % ROW_COUNT;
@@ -277,6 +336,9 @@ void VrMenu_Update(void) {
     if (close) {
         sOpen = 0;
     }
+    if (!sOpen) {
+        sSwallowTick = 1; // closed this tick (button or RESUME) - guard the phantom-press tick that follows
+    }
 
     consume_pad0();
 }
@@ -294,11 +356,12 @@ void VrMenu_Draw(void) {
         // edge, below the teammate status row (which reaches ~y 215), so it can't overlap the stock
         // pause text; the dark strip keeps it readable over the world. Establish the large-text
         // pipeline so the glyphs render regardless of what the HUD left in the combiner.
-        if (gPlayState == PLAY_PAUSE && vr_controllers_active()) {
+        if (gPlayState == PLAY_PAUSE) {
             Graphics_FillRectangle(&gMasterDisp, 58, 221, 262, 236, 8, 10, 26, 150);
             RCP_SetupDL(&gMasterDisp, SETUPDL_83_POINT);
             gDPSetPrimColor(gMasterDisp++, 0, 0, 255, 255, 255, 255);
-            Graphics_DisplayLargeText(64, 225, 0.5f, 0.5f, "R TRIGGER - VR OPTIONS");
+            Graphics_DisplayLargeText(64, 225, 0.5f, 0.5f,
+                                      vr_controllers_active() ? "R TRIGGER - VR OPTIONS" : "R BUTTON - VR OPTIONS");
         }
         return;
     }
@@ -329,6 +392,9 @@ void VrMenu_Draw(void) {
 
     gDPSetPrimColor(gMasterDisp++, 0, 0, 190, 215, 255, 255);
     Graphics_DisplayLargeText(112, 30, 0.72f, 0.72f, "VR OPTIONS");
+    // Release version in the corner, so "which build is this?" is answerable from any headset screenshot.
+    gDPSetPrimColor(gMasterDisp++, 0, 0, 150, 160, 190, 255);
+    Graphics_DisplayLargeText(262, 33, 0.45f, 0.45f, VR_PORT_VERSION_CAPS);
 
     // "..." markers when there are rows scrolled off above / below the window.
     if (sScroll > 0) {

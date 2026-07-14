@@ -41,17 +41,19 @@ void Map_LevelSelect(void) {
         return;
     }
 
-    if (contPress->button & L_JPAD) {
+    // Stick flicks work like the d-pad so the selector is drivable from VR motion controllers
+    // (no d-pad there); gControllerPress carries the edge-detected stick, same as the title menus.
+    if ((contPress->button & L_JPAD) || (contPress->stick_x < -40)) {
         mission--;
         if (mission < 0) {
             mission = 6;
         }
-    } else if (contPress->button & R_JPAD) {
+    } else if ((contPress->button & R_JPAD) || (contPress->stick_x > 40)) {
         mission++;
         if (mission > 6) {
             mission = 0;
         }
-    } else if ((contPress->button & U_JPAD) && (mission != 0)) {
+    } else if (((contPress->button & U_JPAD) || (contPress->stick_y > 40)) && (mission != 0)) {
         difficulty++;
         if (difficulty > 2) {
             difficulty = 0;
@@ -59,7 +61,7 @@ void Map_LevelSelect(void) {
         if ((difficulty == 1) && ((mission == 1) || (mission == 5) || (mission == 6))) {
             difficulty = 2;
         }
-    } else if ((contPress->button & D_JPAD) && (mission != 0)) {
+    } else if (((contPress->button & D_JPAD) || (contPress->stick_y < -40)) && (mission != 0)) {
         difficulty--;
         if ((difficulty != 2) && ((mission == 1) || (mission == 5) || (mission == 6))) {
             difficulty--;
@@ -77,7 +79,9 @@ void Map_LevelSelect(void) {
         Map_CurrentLevel_Setup();
         Map_PositionCursor();
     }
-    if (contPress->button & L_TRIG) {
+    // R works too: the VR controllers reach R through the right grip (no L there), and on the map
+    // screen the grips have no other job.
+    if (contPress->button & (L_TRIG | R_TRIG)) {
         startOption ^= 1;
     }
 

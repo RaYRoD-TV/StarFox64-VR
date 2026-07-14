@@ -32,6 +32,7 @@
 
 #include "port/interpolation/FrameInterpolation.h"
 #include "port/vr/vr.h"
+#include "properties.h" // VR_PORT_VERSION_STR - the release version shown on the window title
 #include <Fast3D/Fast3dWindow.h>
 #include <DisplayListFactory.h>
 #include <TextureFactory.h>
@@ -542,8 +543,14 @@ static void VrFeedImGuiGamepadNav() {
 // stick click -> next view mode. Read focus-independent (SDL_GameControllerUpdate) like the nav feed
 // above, and edge-driven so a held click acts once and can't fight the per-frame VR-controller feed.
 extern "C" void VrGame_CycleViewMode(void); // src/engine/fox_play.c - skips Cockpit off-rails
+// Stick-click switches CHATTER: one physical press can bounce through several down-edges in a few
+// frames, and every edge is a full toggle - the menu strobes open/closed ("very sensitive, not a
+// one shot"). Debounce: accept a rising edge, then ignore further rising edges for ~1/3 s. Falling
+// edges always pass so the fed key state stays consistent (a swallowed bounce's release dedupes).
+#define VR_STICK_CLICK_DEBOUNCE_TICKS 20
 static void VrSdlPadStickClicks(bool menuOpen) {
     static bool sPrevL = false, sPrevR = false;
+    static int sLDebounce = 0, sRDebounce = 0;
     SDL_GameControllerUpdate();
     bool l = false, r = false;
     for (int i = 0, n = SDL_NumJoysticks(); i < n; i++) {
@@ -554,12 +561,25 @@ static void VrSdlPadStickClicks(bool menuOpen) {
             }
         }
     }
-    if (l != sPrevL) {
-        ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;
-        ImGui::GetIO().AddKeyEvent(ImGuiKey_GamepadBack, l);
+    if (sLDebounce > 0) {
+        sLDebounce--;
     }
-    if (r && !sPrevR && !menuOpen) {
+    if (sRDebounce > 0) {
+        sRDebounce--;
+    }
+    if (l != sPrevL) {
+        if (l && sLDebounce == 0) {
+            ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;
+            ImGui::GetIO().AddKeyEvent(ImGuiKey_GamepadBack, true);
+            sLDebounce = VR_STICK_CLICK_DEBOUNCE_TICKS;
+        } else if (!l) {
+            ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;
+            ImGui::GetIO().AddKeyEvent(ImGuiKey_GamepadBack, false);
+        }
+    }
+    if (r && !sPrevR && !menuOpen && sRDebounce == 0) {
         VrGame_CycleViewMode();
+        sRDebounce = VR_STICK_CLICK_DEBOUNCE_TICKS;
     }
     sPrevL = l;
     sPrevR = r;
@@ -576,7 +596,25 @@ static void VrFeedImGuiFromVrControllers(bool menuOpen) {
     ImGuiIO& io = ImGui::GetIO();
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     unsigned vb = vr_controller_buttons();
-    io.AddKeyEvent(ImGuiKey_GamepadBack, (vb & VR_BTN_LSTICK) != 0); // menubar toggle (see Gui::StartFrame)
+    // Menubar toggle (see Gui::StartFrame) - edge-fed with the same chatter debounce as the SDL pad's
+    // stick click, so a bouncing switch can't strobe the menu.
+    {
+        static bool sPrevBack = false;
+        static int sBackDebounce = 0;
+        const bool back = (vb & VR_BTN_LSTICK) != 0;
+        if (sBackDebounce > 0) {
+            sBackDebounce--;
+        }
+        if (back != sPrevBack) {
+            if (back && sBackDebounce == 0) {
+                io.AddKeyEvent(ImGuiKey_GamepadBack, true);
+                sBackDebounce = VR_STICK_CLICK_DEBOUNCE_TICKS;
+            } else if (!back) {
+                io.AddKeyEvent(ImGuiKey_GamepadBack, false);
+            }
+            sPrevBack = back;
+        }
+    }
     if (!menuOpen) {
         return;
     }
@@ -674,12 +712,37 @@ static bool VrControllerImGuiMousePos(float* outX, float* outY) {
     if (!haveSource) {
         return false; // no pointer device - let the desktop mouse drive
     }
-    const float speed = (float)ww * 0.011f; // pixels per frame at full deflection
+    // The desktop mouse SHARES the virtual cursor: whenever it moves it takes the cursor with it
+    // (latest mover wins), so a connected-but-idle pad never locks the real mouse out of the menu.
+    // Its click only counts while it sits inside the game window, so clicking around the desktop
+    // can't press menu widgets. Never warp the OS cursor to the virtual one - that imprisoned the
+    // real mouse in the game window whenever any pad was connected. Hover/click routing doesn't
+    // need it: VR runs single-viewport and io.MousePos is forced after NewFrame, which is all
+    // ImGui uses for hit-testing there.
+    bool mouseDown = false;
+    {
+        static bool sMouseSeen = false;
+        static int sPrevGX = 0, sPrevGY = 0;
+        int gx = 0, gy = 0;
+        const Uint32 mb = SDL_GetGlobalMouseState(&gx, &gy);
+        if (sMouseSeen && (gx != sPrevGX || gy != sPrevGY)) {
+            cx = (float)(gx - wx); // window-local; clamped with the stick result below
+            cy = (float)(gy - wy);
+        }
+        sPrevGX = gx;
+        sPrevGY = gy;
+        sMouseSeen = true;
+        mouseDown = (mb & SDL_BUTTON_LMASK) != 0 && gx >= wx && gx < wx + ww && gy >= wy && gy < wy + wh;
+    }
+    // Quadratic response: full tilt crosses the window in ~3/4 s (twice the old linear glide, which
+    // read as sluggish), while half tilt keeps the old fine-aim speed. gVRPointerSpeed scales it live
+    // (Enhancements > VR "Menu Pointer Speed").
+    const float speed = (float)ww * 0.022f * CVarGetFloat("gVRPointerSpeed", 1.0f);
     if (rs[0] > 0.15f || rs[0] < -0.15f) {
-        cx += rs[0] * speed;
+        cx += rs[0] * fabsf(rs[0]) * speed;
     }
     if (rs[1] > 0.15f || rs[1] < -0.15f) {
-        cy -= rs[1] * speed; // stick +y is up -> screen y decreases
+        cy -= rs[1] * fabsf(rs[1]) * speed; // stick +y is up -> screen y decreases
     }
     if (cx < 0.0f) {
         cx = 0.0f;
@@ -691,7 +754,16 @@ static bool VrControllerImGuiMousePos(float* outX, float* outY) {
     } else if (cy > wh - 1) {
         cy = (float)(wh - 1);
     }
-    ImGui::GetIO().AddMouseButtonEvent(0, ((vr_controller_buttons() & VR_BTN_RTRIGGER) != 0) || padClick);
+    // Edge-driven click so the queue carries one clean down/up per trigger pull instead of a
+    // same-state event every frame.
+    {
+        static bool sPrevClick = false;
+        bool click = ((vr_controller_buttons() & VR_BTN_RTRIGGER) != 0) || padClick || mouseDown;
+        if (click != sPrevClick) {
+            ImGui::GetIO().AddMouseButtonEvent(0, click);
+            sPrevClick = click;
+        }
+    }
     const bool multiViewport = (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0;
     *outX = multiViewport ? (cx + wx) : cx;
     *outY = multiViewport ? (cy + wy) : cy;
@@ -722,11 +794,31 @@ void GameEngine::RunCommands(Gfx* Commands, const std::vector<std::unordered_map
         vr_begin_frame();
         vr_submit();
     }
+    // Name + release version on the window title, so a desktop screenshot or stream identifies the
+    // build at a glance (the exe's file properties and both in-game menus carry the same version).
+    // Per-frame path (not init) because libultraship names the window during backend setup - this
+    // takes over once, after that. GL backend only; the SDL window isn't reachable on the others.
+    {
+        static bool sTitleSet = false;
+        if (!sTitleSet) {
+            if (SDL_Window* win = SDL_GL_GetCurrentWindow()) {
+                SDL_SetWindowTitle(win, "Star Fox 64 VR " VR_PORT_VERSION_STR);
+                sTitleSet = true;
+            }
+        }
+    }
     if (vrActive) {
         // One GUI cycle per game tick keeps input + the controller device handler alive. When the ImGui
         // menu is open, render it once into a stable offscreen FBO and present it on the head-locked
         // panel so it's usable in the headset; otherwise render the stereo / panel frame(s).
         auto gui = wnd->GetGui();
+        // Keep every ImGui popup in the MAIN viewport. With multi-viewports on, a dropdown that
+        // spills past the desktop window (Developer > Level Select is taller than the window)
+        // becomes its own OS window, drawn straight to the desktop - it never reaches the menu
+        // FBO below, so in the headset the menu "opens" invisibly and the window-clamped cursor
+        // can never reach it. With the flag off ImGui clamps tall popups into the window and
+        // scrolls them, so they land on the head-locked panel like the rest of the menu.
+        ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
         const bool menuOpen = gui->GetMenuOrMenubarVisible();
         float vrMouseX = 0.0f, vrMouseY = 0.0f;
         bool vrMouseValid = false;

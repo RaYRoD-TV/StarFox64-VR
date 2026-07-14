@@ -44,6 +44,22 @@ f32 gAndrossUnkBrightness;     // can be static
 
 f32 gAndrossUnkAlpha = 0.0f;
 u16 gBolseDynamicGround = true;
+
+extern bool vr_is_active(void); // src/port/vr/vr.h - true when the OpenXR session is rendering
+
+// The Andross head fight runs its green swirl at alpha 32 (the brain phase pushes it to 255) - faithful
+// to the N64, but a 12% swirl over pure black reads as NO background in a headset. Boost it in VR with a
+// multiplier, not a floor, so the script's fade-in/out still lands at the same endpoints (0 stays 0).
+static s32 Background_AndrossSwirlAlpha(void) {
+    s32 a = (s32) gAndrossUnkAlpha;
+    if (vr_is_active()) {
+        a *= 3;
+        if (a > 255) {
+            a = 255;
+        }
+    }
+    return a;
+}
 s32 D_bg_800C9C38 = 0; // unused?
 
 static f32 sGroundPositions360x_FIX[] = {
@@ -719,7 +735,8 @@ void Background_DrawBackdrop(void) {
                             if (gDrawBackdrop == 5) {
                                 gDPSetPrimColor(gMasterDisp++, 0x00, 0x00, 255, 255, 255, 64);
                             } else {
-                                gDPSetPrimColor(gMasterDisp++, 0x00, 0x00, 0, 255, 128, (s32) gAndrossUnkAlpha);
+                                gDPSetPrimColor(gMasterDisp++, 0x00, 0x00, 0, 255, 128,
+                                                Background_AndrossSwirlAlpha());
                             }
                             Matrix_Translate(gGfxMatrix, 0.0f, 0.0f, -290.0f, MTXF_APPLY);
                             Matrix_Push(&gGfxMatrix);
@@ -911,8 +928,21 @@ void Background_DrawBackdrop(void) {
                         bgYpos = -(360.0f - bgYpos);
                     }
 
-                    // @port: Tag the transform.
-                    FrameInterpolation_RecordOpenChild("Backdrop_Space", 0);
+                    // @port: Tag the transform. The scroll coords wrap modularly, and frame interpolation
+                    // would lerp a wrap as the backdrop sweeping clear across the sky (a planet visibly
+                    // sliding/jumping, obvious in VR's wide view). Bump the tag id on any wrap-sized jump
+                    // so that frame snaps instead of interpolating.
+                    {
+                        static f32 sPrevBgX = 0.0f;
+                        static f32 sPrevBgY = 0.0f;
+                        static s32 sBgSnap = 0;
+                        if ((fabsf(bgXpos - sPrevBgX) > 240.0f) || (fabsf(bgYpos - sPrevBgY) > 120.0f)) {
+                            sBgSnap++;
+                        }
+                        sPrevBgX = bgXpos;
+                        sPrevBgY = bgYpos;
+                        FrameInterpolation_RecordOpenChild("Backdrop_Space", sBgSnap);
+                    }
 
                     Matrix_RotateZ(gGfxMatrix, gStarfieldRoll, MTXF_APPLY);
 

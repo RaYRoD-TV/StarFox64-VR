@@ -1,14 +1,21 @@
+// Version numbers for the VR port releases (the GitHub tags): keep VER_*, the display strings below,
+// and the release tag in sync when cutting a new build. This template is the tracked source - CMake
+// copies it to properties.h at configure time (properties.h itself is generated and gitignored).
+#define VER_FILEVERSION          0, 1, 7, 1
+#define VER_FILEVERSION_STR      "0.1.7-test1\0"
 
-#define VER_FILEVERSION          @CMAKE_PROJECT_VERSION_MAJOR@, @CMAKE_PROJECT_VERSION_MINOR@, @CMAKE_PROJECT_VERSION_PATCH@, 0
-#define VER_FILEVERSION_STR      "@CMAKE_PROJECT_VERSION_MAJOR@.@CMAKE_PROJECT_VERSION_MINOR@.@CMAKE_PROJECT_VERSION_PATCH@\0"
+#define VER_PRODUCTVERSION       0, 1, 7, 1
+#define VER_PRODUCTVERSION_str   "0.1.7-test1\0"
 
-#define VER_PRODUCTVERSION       @CMAKE_PROJECT_VERSION_MAJOR@, @CMAKE_PROJECT_VERSION_MINOR@, @CMAKE_PROJECT_VERSION_PATCH@, 0
-#define VER_PRODUCTVERSION_str   "@CMAKE_PROJECT_VERSION_MAJOR@.@CMAKE_PROJECT_VERSION_MINOR@.@CMAKE_PROJECT_VERSION_PATCH@\0"
+#define VER_COMPANYNAME_STR      "SonicDcer & Lywx\0"
+#define VER_PRODUCTNAME_STR      "Star Fox 64 VR\0"
 
-#define VER_COMPANYNAME_STR      "@PROJECT_TEAM@\0"
-#define VER_PRODUCTNAME_STR      "Starship\0"
+#define VER_INTERNALNAME_STR     "Starship\0"
+#define VER_ORIGINALFILENAME_STR "Starship.exe\0"
 
-#define VER_INTERNALNAME_STR     "@PROJECT_NAME@\0"
-#define VER_ORIGINALFILENAME_STR "@PROJECT_NAME@.exe\0"
+#define VER_FILEDESCRIPTION_STR  "Star Fox 64 VR (Starship port, beta)\0"
 
-#define VER_FILEDESCRIPTION_STR  "Starship - @PROJECT_BUILD_NAME@\0"
+// Plain strings for in-game display. VR_PORT_VERSION_STR goes in the window title and the ImGui menu;
+// VR_PORT_VERSION_CAPS is the same value for the in-headset menu's large font, which only has A-Z 0-9 . -
+#define VR_PORT_VERSION_STR  "v0.1.7-test1"
+#define VR_PORT_VERSION_CAPS "V0.1.7-TEST1"

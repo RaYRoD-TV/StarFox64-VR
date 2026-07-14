@@ -791,6 +791,66 @@ void Vr_DrawCockpitFloor(void) {
     gDPPipeSync(gMasterDisp++);
 }
 
+// VR only: a comm screen on the cockpit dash - while a radio call is on, the caller's portrait is drawn
+// on a small panel inside the cockpit (same frame as the interior model, so it banks with the ship),
+// putting the conversation IN the cockpit instead of only on the flat HUD plane. The portrait pointer
+// comes from fox_radio.c and already alternates its talking-mouth frame, so the face animates with the
+// voice. The dash position can't be read from the model here, so placement/size are CVar-tunable for
+// in-headset dialing, like the cockpit floor; gVRCockpitComm toggles it.
+extern u16* gVrRadioPortraitTex; // fox_radio.c - this frame's radio portrait (NULL while the box is closed)
+static Vtx sVrCockpitCommVtx[4];
+void Vr_DrawCockpitComm(void) {
+    f32 cx, cy, cz, e;
+    s32 j;
+
+    if (!vr_is_active() || (vr_get_view_mode() != VR_VIEW_COCKPIT) || (CVarGetInteger("gVRCockpitComm", 1) == 0)) {
+        return;
+    }
+    // Both guards: the pointer is refreshed by the radio draw (a frame behind at worst), the scale is the
+    // authoritative box-visible flag - so a stale pointer can never draw after the call ends.
+    if ((gVrRadioPortraitTex == NULL) || (gRadioPortraitScaleY <= 0.0f)) {
+        return;
+    }
+    cx = CVarGetFloat("gVRCockpitCommX", 0.0f);     // sideways centre (local units, interior frame)
+    cy = CVarGetFloat("gVRCockpitCommY", -2.0f);    // height on the dash
+    cz = CVarGetFloat("gVRCockpitCommZ", 9.0f);     // forward toward the windshield
+    e = CVarGetFloat("gVRCockpitCommSize", 2.6f);   // half-extent; the portrait is square (44x44)
+
+    // Upright quad facing the pilot; texture coords in s10.5 (texel * 32) across the full 44x44 portrait.
+    for (j = 0; j < 4; j++) {
+        sVrCockpitCommVtx[j].v.ob[0] = (s16) (((j == 0) || (j == 3)) ? -e : e);
+        sVrCockpitCommVtx[j].v.ob[1] = (s16) ((j <= 1) ? e : -e);
+        sVrCockpitCommVtx[j].v.ob[2] = 0;
+        sVrCockpitCommVtx[j].v.flag = 0;
+        sVrCockpitCommVtx[j].v.tc[0] = (s16) ((((j == 0) || (j == 3)) ? 0 : 44) * 32);
+        sVrCockpitCommVtx[j].v.tc[1] = (s16) (((j <= 1) ? 0 : 44) * 32);
+        sVrCockpitCommVtx[j].v.cn[0] = sVrCockpitCommVtx[j].v.cn[1] = sVrCockpitCommVtx[j].v.cn[2] = 255;
+        sVrCockpitCommVtx[j].v.cn[3] = 255;
+    }
+
+    Matrix_Push(&gGfxMatrix);
+    Matrix_Translate(gGfxMatrix, cx, cy, cz, MTXF_APPLY);
+    Matrix_SetGfxMtx(&gMasterDisp);
+
+    gDPPipeSync(gMasterDisp++);
+    gSPTexture(gMasterDisp++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON);
+    gDPSetCycleType(gMasterDisp++, G_CYC_1CYCLE);
+    gDPSetCombineMode(gMasterDisp++, G_CC_DECALRGBA, G_CC_DECALRGBA);
+    gDPSetRenderMode(gMasterDisp++, G_RM_ZB_OPA_SURF, G_RM_ZB_OPA_SURF2);
+    // Both faces drawn: the interior frame is mirrored (rotY pi), and the panel must not vanish while its
+    // facing is dialed in.
+    gSPClearGeometryMode(gMasterDisp++, G_LIGHTING | G_CULL_BACK | G_FOG);
+    gSPSetGeometryMode(gMasterDisp++, G_ZBUFFER | G_SHADE | G_SHADING_SMOOTH);
+    gDPLoadTextureBlock(gMasterDisp++, gVrRadioPortraitTex, G_IM_FMT_RGBA, G_IM_SIZ_16b, 44, 44, 0, G_TX_CLAMP,
+                        G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    gSPVertex(gMasterDisp++, (uintptr_t) sVrCockpitCommVtx, 4, 0);
+    gSP2Triangles(gMasterDisp++, 0, 1, 2, 0, 0, 2, 3, 0);
+
+    gSPSetGeometryMode(gMasterDisp++, G_LIGHTING | G_CULL_BACK | G_FOG);
+    Matrix_Pop(&gGfxMatrix);
+    gDPPipeSync(gMasterDisp++);
+}
+
 void Display_Arwing(Player* player, s32 reflectY) {
     Vec3f sp4C;
     f32 sp48;
@@ -826,6 +886,7 @@ void Display_Arwing(Player* player, s32 reflectY) {
             Matrix_SetGfxMtx(&gMasterDisp);
             gSPDisplayList(gMasterDisp++, aAwCockpitViewDL);
             Vr_DrawCockpitFloor(); // VR Cockpit: close the see-through gap under the interior, same frame
+            Vr_DrawCockpitComm(); // VR Cockpit: the radio caller's portrait on the dash, same frame
             Matrix_Pop(&gGfxMatrix);
         }
     } else {
@@ -2100,7 +2161,13 @@ void Display_Update(void) {
                                gPlayCamAt.z);
         Background_DrawStarfield();
     }
-    Background_DrawBackdrop();
+    // gVRLevelBackdrop (default on): the 2D backdrop panorama layered over the dome, per the sky-layering
+    // note above. Off = dome-only sky, for players who find a level's panorama too dark - only honoured
+    // while the dome actually covers the sky, so the stages whose backdrop IS the level (Aquas, the Venom
+    // routes, the warp zone - where the dome yields) never lose their scenery. Flat play is untouched.
+    if (!vr_sky_dome_active() || (CVarGetInteger("gVRLevelBackdrop", 1) != 0)) {
+        Background_DrawBackdrop();
+    }
     Background_DrawSun();
 
     Matrix_Push(&gGfxMatrix);

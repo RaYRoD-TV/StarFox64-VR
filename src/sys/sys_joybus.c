@@ -76,12 +76,17 @@ void Controller_Init(void) {
 //   right grip            bank right (R; double-squeeze = barrel roll right)
 //   right stick up        boost   (the game's stock boost button)
 //   right stick down      brake
+//   right stick right     answer ROB / radio calls (C-Right; off while right-stick turning is enabled)
+//   right stick x-axis    steering, when gVRRightStickTurn is on
 //   right stick click     step to the next VR view mode (Third / First / Cockpit / Diorama / Theater)
 //   left stick click      open / close the settings menu (handled in the engine, not here)
 //   menu button           pause (Start)
+//   Y                     answer ROB / radio calls (C-Right)
+//   X                     pause (for controllers whose menu button belongs to the system, e.g. PSVR2)
 // Per axis the stronger source wins, so a gamepad on the desk stays usable alongside the
 // motion controllers.
 bool GameEngine_GameInputBlocked(void); // src/port/Engine.cpp - true while the settings menu owns input
+extern s32 CVarGetInteger(const char* name, s32 defaultValue);
 static void Controller_MergeVr(void) {
     static unsigned sPrevVrBtns = 0; // last frame's VR buttons, for right-stick-click edge detection
     unsigned vr = vr_controller_buttons();
@@ -90,11 +95,13 @@ static void Controller_MergeVr(void) {
     float m;
     u16 b = 0;
     s8 vx, vy;
+    s32 rsTurn;
 
     if (!vr_controllers_active()) {
         sPrevVrBtns = vr;
         return;
     }
+    rsTurn = CVarGetInteger("gVRRightStickTurn", 0);
     // The settings menu is open with controller nav: the sticks drive the menu (fed to it by the
     // engine), not the ship. Physical pads are blocked by the same predicate inside libultraship.
     if (GameEngine_GameInputBlocked()) {
@@ -118,9 +125,13 @@ static void Controller_MergeVr(void) {
     }
     // Pause fallback: some controllers reach the game through a runtime's profile emulation with no
     // menu button (PSVR2 Sense is the big one - its PS button belongs to the system), so the
-    // otherwise-unused LEFT-hand face buttons also pause. They have no flight duty, nothing is lost.
-    if (vr & (VR_BTN_X | VR_BTN_Y)) {
+    // otherwise-unused X also pauses. Y answers ROB and incoming radio calls (C-Right) - a dedicated
+    // answer button, as requested, instead of a second pause.
+    if (vr & VR_BTN_X) {
         b |= START_BUTTON;
+    }
+    if (vr & VR_BTN_Y) {
+        b |= R_CBUTTONS;
     }
     vr_controller_stick(0, ls);
     vr_controller_stick(1, rs);
@@ -134,15 +145,24 @@ static void Controller_MergeVr(void) {
     }
     // Right stick right = C-Right (answer ROB / incoming messages). Requires a clearly sideways
     // push - the dominant-axis bias keeps diagonal boost/brake flicks from false-triggering it.
-    if ((rs[0] > 0.6f) && (rs[0] > (rs[1] < 0 ? -rs[1] : rs[1]) * 1.2f)) {
+    // Retired while right-stick turning is on: a hard turn must not answer a call (Y still answers).
+    if (!rsTurn && (rs[0] > 0.6f) && (rs[0] > (rs[1] < 0 ? -rs[1] : rs[1]) * 1.2f)) {
         b |= R_CBUTTONS;
     }
 
     // Right stick CLICK steps to the next VR view mode (Third -> First -> Cockpit -> Diorama -> Theater ->
     // wrap; Cockpit is skipped off-rails). Discrete and edge-detected: one step per click, no accidental
-    // analog switching mid-flight.
-    if ((vr & VR_BTN_RSTICK) && !(sPrevVrBtns & VR_BTN_RSTICK)) {
-        VrGame_CycleViewMode();
+    // analog switching mid-flight. Debounced on top: stick-click switches chatter, and each bounce is a
+    // real edge - without the hold-off one press could skip through several modes.
+    {
+        static s32 sClickDebounce = 0;
+        if (sClickDebounce > 0) {
+            sClickDebounce--;
+        }
+        if ((vr & VR_BTN_RSTICK) && !(sPrevVrBtns & VR_BTN_RSTICK) && (sClickDebounce == 0)) {
+            VrGame_CycleViewMode();
+            sClickDebounce = 20; // ~1/3 s at the 60 Hz input rate
+        }
     }
     sPrevVrBtns = vr;
 
@@ -168,6 +188,21 @@ static void Controller_MergeVr(void) {
         if ((vy < 0 ? -vy : vy) > (sNextController[0].stick_y < 0 ? -sNextController[0].stick_y
                                                                   : sNextController[0].stick_y)) {
             sNextController[0].stick_y = vy;
+        }
+    }
+
+    // Optional right-stick steering (gVRRightStickTurn, off by default): the right stick's X axis
+    // banks/turns exactly like the flight stick, same deadzone and range. Merged strongest-source-wins
+    // so it cooperates with the left stick instead of fighting it. Boost/brake stay on this stick's Y.
+    if (rsTurn) {
+        f32 rx = rs[0];
+        f32 ax = (rx < 0.0f) ? -rx : rx;
+        if (ax > 0.12f) {
+            s8 tv = (s8) ((ax - 0.12f) / (1.0f - 0.12f) * 80.0f * ((rx < 0.0f) ? -1.0f : 1.0f));
+            if ((tv < 0 ? -tv : tv) > (sNextController[0].stick_x < 0 ? -sNextController[0].stick_x
+                                                                      : sNextController[0].stick_x)) {
+                sNextController[0].stick_x = tv;
+            }
         }
     }
     sNextController[0].err_no = 0;

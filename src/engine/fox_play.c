@@ -5977,7 +5977,12 @@ void Player_Update(Player* player) {
             // manual C-Up toggle above. Same eligibility as that toggle (Arwing, or versus Landmaster).
             if (vr_is_active() && !player->somersault &&
                 ((player->form == FORM_ARWING) || (gVersusMode && (player->form == FORM_LANDMASTER)))) {
-                s32 wantCockpit = (vr_get_view_mode() == VR_VIEW_COCKPIT);
+                // On-rails only: the game never draws the cockpit interior in all-range battles, so
+                // engaging alternateView there strands the player in a bare in-ship camera. The view
+                // cycle already skips Cockpit off-rails; this covers a stage TRANSITIONING to all-range
+                // (training, Bolse) while Cockpit is the selected mode - it falls back to the external
+                // camera until the rails resume.
+                s32 wantCockpit = (vr_get_view_mode() == VR_VIEW_COCKPIT) && (gLevelMode == LEVELMODE_ON_RAILS);
 
                 if (player->alternateView != wantCockpit) {
                     player->alternateView = wantCockpit;

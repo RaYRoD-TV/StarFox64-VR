@@ -13,6 +13,7 @@
 #include "port/Engine.h"
 #include "port/notification/notification.h"
 #include "utils/StringHelper.h"
+#include "properties.h" // VR_PORT_VERSION_STR - the release version shown at the top of the VR menu
 
 #ifdef __SWITCH__
 #include <port/switch/SwitchImpl.h>
@@ -720,6 +721,7 @@ void DrawEnhancementsMenu() {
         // VR options. The VR layer reads these CVars every frame, so changes apply live. Only useful
         // while running in VR (headset connected, or forced with --vr).
         if (UIWidgets::BeginMenu("VR")) {
+            ImGui::TextDisabled("Star Fox 64 VR " VR_PORT_VERSION_STR);
             static const char* vrViewModes[] = { "Third Person", "First Person", "Cockpit", "Diorama", "Theater" };
             UIWidgets::CVarCombobox("View Mode", "gVRViewMode", vrViewModes, {
                 .tooltip = "How the game is shown in VR. Third Person = the classic chase cam in stereo 3D; "
@@ -771,6 +773,12 @@ void DrawEnhancementsMenu() {
                            "flying upside down puts you upside down. Turn off to keep the horizon level "
                            "(more comfortable). Cockpit always rolls with the ship; Third Person stays level.",
                 .defaultValue = true,
+            });
+            UIWidgets::CVarCheckbox("Right Stick Turning", "gVRRightStickTurn", {
+                .tooltip = "Steer left/right with the right stick's X axis too (motion controllers). Boost and "
+                           "brake stay on its Y axis. While this is on, the flick-right-to-answer gesture is "
+                           "disabled so a hard turn can't answer a call - use Y to answer instead.",
+                .defaultValue = false,
             });
             UIWidgets::CVarSliderFloat("Diorama Distance (m)", "gVRDioramaDist", 0.1f, 3.0f, 0.25f, {
                 .tooltip = "How far in front of you the tabletop sits (Diorama mode).",
@@ -841,6 +849,28 @@ void DrawEnhancementsMenu() {
                 .tooltip = "Show the canopy glass in Cockpit view. Turn off for a completely clear view.",
                 .defaultValue = true,
             });
+            UIWidgets::CVarCheckbox("Cockpit Comm Screen", "gVRCockpitComm", {
+                .tooltip = "In Cockpit view, show the radio caller's portrait on a small dash panel while a "
+                           "call is playing - the conversation happens in the cockpit instead of only on the "
+                           "HUD. Use the sliders below to place it on your dash.",
+                .defaultValue = true,
+            });
+            UIWidgets::CVarSliderFloat("Comm Screen Height", "gVRCockpitCommY", -12.0f, 12.0f, -2.0f, {
+                .tooltip = "Raise or lower the comm panel on the dash (Cockpit view).",
+                .format = "%.1f",
+                .step = 0.25f,
+            });
+            UIWidgets::CVarSliderFloat("Comm Screen Forward", "gVRCockpitCommZ", -20.0f, 20.0f, 9.0f, {
+                .tooltip = "Move the comm panel toward or away from you. If it isn't visible, sweep this "
+                           "through its range while a call is playing; negative flips to the other side.",
+                .format = "%.1f",
+                .step = 0.5f,
+            });
+            UIWidgets::CVarSliderFloat("Comm Screen Size", "gVRCockpitCommSize", 0.5f, 12.0f, 2.6f, {
+                .tooltip = "Size of the comm panel.",
+                .format = "%.1f",
+                .step = 0.1f,
+            });
             UIWidgets::CVarCheckbox("Cutscenes in VR", "gVRCutscenes", {
                 .tooltip = "Play cutscenes in full stereo instead of on the flat theater screen. The scripted "
                            "camera sweeps can be intense - off is the comfortable default.",
@@ -870,9 +900,20 @@ void DrawEnhancementsMenu() {
                 .format = "%.2f",
                 .step = 0.05f,
             });
+            UIWidgets::CVarSliderFloat("Menu Pointer Speed", "gVRPointerSpeed", 0.5f, 3.0f, 1.0f, {
+                .tooltip = "How fast the stick-driven pointer glides across this menu.",
+                .format = "%.2f",
+                .step = 0.05f,
+            });
             UIWidgets::CVarCheckbox("World-Anchored Sky Dome", "gVRSkyDome", {
                 .tooltip = "Replace the flat sky with a world-anchored 3D dome (blue sky + clouds on planets, "
                            "stars in space) that stays put as you turn your head. Turn off for the flat game sky.",
+                .defaultValue = true,
+            });
+            UIWidgets::CVarCheckbox("Level Backdrops", "gVRLevelBackdrop", {
+                .tooltip = "Layer the level's own 2D backdrop panorama over the sky dome (Sector Z's nebula, "
+                           "Area 6's planet Venom, ...). Turn off for the clean dome sky if a level's panorama "
+                           "reads too dark. Stages whose backdrop is the level itself always keep it.",
                 .defaultValue = true,
             });
             UIWidgets::CVarSliderFloat("Sky Brightness", "gVRSkyBright", 0.2f, 2.0f, 1.0f, {

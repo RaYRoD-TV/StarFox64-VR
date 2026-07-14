@@ -275,16 +275,23 @@ bool vr_sky_dome_active(void) {
     }
     // Some stages keep their own backdrop instead of the dome: the generic blue-sky/cloud gradient is
     // plain wrong there. Aquas is underwater (dark), the Venom routes have their dark orange cloud
-    // panoramas, and inside Andross' arena the scrolling swirl IS the level - the dome left the boss
+    // panoramas, Zoness is a murky yellow-green overcast (the bright blue dome washed the whole stage
+    // out), and inside Andross' arena the scrolling swirl IS the level - the dome left the boss
     // floating in empty space.
     switch (gCurrentLevel) {
         case LEVEL_AQUAS:
+        case LEVEL_ZONESS:
         case LEVEL_VENOM_1:
         case LEVEL_VENOM_2:
         case LEVEL_VENOM_ANDROSS:
             return false;
         default:
             break;
+    }
+    // The warp zone (Meteo / Sector X phase 1) IS its spinning psychedelic backdrop plus the distorted
+    // starfield - with the dome standing in, the corridor reads as empty sky and the rings are unflyable.
+    if (((gCurrentLevel == LEVEL_METEO) || (gCurrentLevel == LEVEL_SECTOR_X)) && (gLevelPhase == 1)) {
+        return false;
     }
     return vr_is_active() && sCachedOn;
 }
